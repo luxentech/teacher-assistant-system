@@ -2,7 +2,7 @@
   "name": "نظام المساعد الذكي للمدرسين | TeacherOS Pro",
   "short_name": "حضور الطلاب",
   "description": "منصة إدارة حضور الطلاب والدروس والسناتر التعليمية",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#059669",

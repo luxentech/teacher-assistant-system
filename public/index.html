@@ -6,13 +6,14 @@
   <title>نظام المساعد الذكي للمدرسين | TeacherOS Pro</title>
   
   <!-- Web App & PWA Meta Tags -->
-  <link rel="manifest" href="/manifest.json">
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
   <meta name="theme-color" content="#059669">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="TeacherOS">
-  <link rel="apple-touch-icon" href="/manifest.json">
+  <link rel="apple-touch-icon" href="manifest.json">
   
   <!-- Google Fonts: Cairo -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -29,6 +30,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script src="https://unpkg.com/html5-qrcode"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <script>
     tailwind.config = {
@@ -924,10 +926,17 @@
                 <i class="fa-solid fa-floppy-disk ml-1"></i> حفظ التعديلات
               </button>
 
-              <button type="button" onclick="downloadDataBackup()" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition active:scale-95">
-                <i class="fa-solid fa-download"></i>
-                <span>تحميل نسخة احتياطية (Backup)</span>
-              </button>
+              <button type="button" <div class="flex items-center gap-2">
+                <button type="button" onclick="downloadDataBackup()" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition active:scale-95">
+                  <i class="fa-solid fa-download"></i>
+                  <span>تحميل نسخة</span>
+                </button>
+                <button type="button" onclick="document.getElementById('restoreFileInput').click()" class="bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition active:scale-95">
+                  <i class="fa-solid fa-upload"></i>
+                  <span>استعادة نسخة</span>
+                </button>
+                <input type="file" id="restoreFileInput" accept=".json" onchange="restoreDataBackup(event)" class="hidden">
+              </div>
             </div>
           </form>
         </div>
@@ -1445,6 +1454,6 @@
   </script>
 
   <!-- Main JavaScript App Logic -->
-  <script src="/app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

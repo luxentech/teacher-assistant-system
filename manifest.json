@@ -1,0 +1,24 @@
+{
+  "name": "نظام المساعد الذكي للمدرسين | TeacherOS Pro",
+  "short_name": "حضور الطلاب",
+  "description": "منصة إدارة حضور الطلاب والدروس والسناتر التعليمية",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#059669",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='25' fill='%23059669'/><path d='M50 20 L85 38 L50 56 L15 38 Z M80 44 L80 65 L72 65 L72 48 Z M30 54 L30 70 C30 78 70 78 70 70 L70 54 L50 64 Z' fill='%23ffffff'/></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='25' fill='%23059669'/><path d='M50 20 L85 38 L50 56 L15 38 Z M80 44 L80 65 L72 65 L72 48 Z M30 54 L30 70 C30 78 70 78 70 70 L70 54 L50 64 Z' fill='%23ffffff'/></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

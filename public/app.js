@@ -19,26 +19,1039 @@ document.addEventListener('DOMContentLoaded', () => {
   checkAuthStatus();
 });
 
-// ==========================================
-// 1. API HELPER WITH AUTHENTICATION
-// ==========================================
-async function apiFetch(endpoint, options = {}) {
-  const headers = options.headers || {};
-  if (authToken) {
-    headers['Authorization'] = `Bearer ${authToken}`;
+// ========================================================
+// 0. LOCAL STORAGE CLIENT DATABASE ENGINE (بدون سيرفر وبدون باك إند)
+// ========================================================
+const DB_STORAGE_KEY = 'teacher_os_db_v1';
+
+function getLocalDB() {
+  try {
+    const raw = localStorage.getItem(DB_STORAGE_KEY);
+    if (!raw) {
+      const initialDB = {
+        users: [
+          {
+            id: 'admin_master',
+            name: 'المدير العام (الأدمن)',
+            phone: 'admin',
+            password: 'admin',
+            subject: 'إدارة المنصة',
+            center_name: 'الإدارة العامة',
+            role: 'admin',
+            status: 'active',
+            created_at: new Date().toISOString()
+          }
+        ],
+        groups: [],
+        students: [],
+        sessions: [],
+        attendance: [],
+        payments: [],
+        expenses: [],
+        handouts: [],
+        student_handouts: [],
+        messages: [],
+        settings: {}
+      };
+      localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(initialDB));
+      return initialDB;
+    }
+    const db = JSON.parse(raw);
+    if (!db.users) db.users = [];
+    if (!db.users.some(u => u.role === 'admin' || u.phone === 'admin')) {
+      db.users.push({
+        id: 'admin_master',
+        name: 'المدير العام (الأدمن)',
+        phone: 'admin',
+        password: 'admin',
+        subject: 'إدارة المنصة',
+        center_name: 'الإدارة العامة',
+        role: 'admin',
+        status: 'active',
+        created_at: new Date().toISOString()
+      });
+      localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(db));
+    }
+    if (!db.groups) db.groups = [];
+    if (!db.students) db.students = [];
+    if (!db.sessions) db.sessions = [];
+    if (!db.attendance) db.attendance = [];
+    if (!db.payments) db.payments = [];
+    if (!db.expenses) db.expenses = [];
+    if (!db.handouts) db.handouts = [];
+    if (!db.student_handouts) db.student_handouts = [];
+    if (!db.messages) db.messages = [];
+    if (!db.settings) db.settings = {};
+    return db;
+  } catch (err) {
+    console.error('Database parse error:', err);
+    return { users: [], groups: [], students: [], sessions: [], attendance: [], payments: [], expenses: [], handouts: [], student_handouts: [], messages: [], settings: {} };
   }
-  if (!(options.body instanceof FormData) && !headers['Content-Type']) {
-    headers['Content-Type'] = 'application/json';
+}
+
+function saveLocalDB(db) {
+  try {
+    localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(db));
+  } catch (err) {
+    console.error('Database save error:', err);
+    alert('تنبيه: مساحة التخزين في المتصفح ممتلئة!');
+  }
+}
+
+function generateLocalId() {
+  return 'id_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
+}
+
+// Client-Side Router to simulate backend REST APIs directly in the browser
+async function clientStorageRouter(endpoint, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const [pathOnly, queryString] = endpoint.split('?');
+  const params = new URLSearchParams(queryString || '');
+  let body = {};
+  if (options.body) {
+    if (typeof options.body === 'string') {
+      try { body = JSON.parse(options.body); } catch(e) { body = {}; }
+    } else {
+      body = options.body;
+    }
   }
 
-  try {
-    const res = await fetch(endpoint, { credentials: 'omit', ...options, credentials: 'same-origin', headers });
-    if (res.status === 401) {
-      handleUnauthorized();
-      throw new Error('جلسة تسجيل الدخول منتهية');
+  const db = getLocalDB();
+  const currentUserId = authToken;
+  const user = currentUserId ? db.users.find(u => String(u.id) === String(currentUserId)) : null;
+
+  // Small delay for smooth UI feedback
+  await new Promise(r => setTimeout(r, 30));
+
+  // --- 1. AUTHENTICATION ---
+  if (pathOnly === '/api/auth/register' && method === 'POST') {
+    const { name, phone, password, confirmPassword, subject, center_name } = body;
+    if (!name || !name.trim()) return { success: false, error: 'الاسم مطلوب بالكامل' };
+    const cleanPhone = normalizeClientPhone(phone);
+    if (!cleanPhone || cleanPhone.length < 3) return { success: false, error: 'برجاء إدخال رقم هاتف صحيح' };
+    const cleanPass = String(password || '').trim();
+    if (!cleanPass || cleanPass.length < 3) return { success: false, error: 'كلمة السر يجب ألا تقل عن 3 خانات' };
+    if (cleanPass !== String(confirmPassword || '').trim()) return { success: false, error: 'كلمة السر وتأكيدها غير متطابقين' };
+
+    if (db.users.some(u => u.phone === cleanPhone)) {
+      return { success: false, error: 'رقم الهاتف مسجل بالفعل مسبقاً، يمكنك تسجيل الدخول به مباشرة' };
     }
-    const data = await res.json();
-    return data;
+
+    const newUser = {
+      id: generateLocalId(),
+      name: name.trim(),
+      phone: cleanPhone,
+      password: cleanPass,
+      subject: (subject || '').trim(),
+      center_name: (center_name || '').trim(),
+      role: 'teacher',
+      status: 'active',
+      created_at: new Date().toISOString()
+    };
+    db.users.push(newUser);
+    db.settings[newUser.id] = {
+      teacher_name: newUser.name,
+      subject: newUser.subject || 'العامة',
+      center_name: newUser.center_name || 'السنتر التعليمي',
+      currency: 'جنيه',
+      whatsapp_absent_msg: 'السلام عليكم ورحمة الله وبركاته، ولي أمر الطالب {student_name}، نحيطكم علماً بأن الطالب تغيب اليوم الموافق {date} عن حصة مادة {subject} مع {teacher_name}. برجاء المتابعة والاهتمام حرصاً على مستواه التعليمي.',
+      whatsapp_debt_msg: 'السلام عليكم ورحمة الله وبركاته، نود تذكيركم بوجود مستحقات دراسية متأخرة على الطالب {student_name} بمبلغ {amount} {currency}. برجاء التكرم بالسداد في أقرب فرصة.',
+      whatsapp_quiz_msg: 'السلام عليكم ورحمة الله وبركاته، ولي أمر الطالب {student_name}، نود إحاطتكم بأن درجة الطالب في اختبار {subject} اليوم هي ({score} من {max_score}). نتمنى له دوام التوفيق والنجاح.'
+    };
+    saveLocalDB(db);
+    return { success: true, data: { user: newUser, token: newUser.id } };
+  }
+
+  if (pathOnly === '/api/auth/login' && method === 'POST') {
+    const { phone, password } = body;
+    const cleanPhone = normalizeClientPhone(phone);
+    const cleanPass = String(password || '').trim();
+    const foundUser = db.users.find(u => u.phone === cleanPhone);
+    if (!foundUser) return { success: false, error: 'رقم الهاتف غير مسجل بالنظام، برجاء التأكد أو إنشاء حساب جديد' };
+    if (foundUser.status === 'blocked') return { success: false, error: 'تم إيقاف هذا الحساب من قِبل إدارة المنصة' };
+    if (foundUser.password !== cleanPass) return { success: false, error: 'كلمة السر غير صحيحة، برجاء المحاولة مرة أخرى' };
+    return { success: true, data: { user: foundUser, token: foundUser.id } };
+  }
+
+  if (pathOnly === '/api/auth/me') {
+    if (!user) return { success: false, status: 401, error: 'جلسة تسجيل الدخول منتهية' };
+    return { success: true, data: user };
+  }
+
+  if (pathOnly === '/api/auth/logout' && method === 'POST') {
+    return { success: true };
+  }
+
+  if (pathOnly === '/api/auth/profile' && method === 'PUT') {
+    if (!user) return { success: false, status: 401 };
+    const { name, subject, center_name, password } = body;
+    if (name) user.name = name.trim();
+    if (subject !== undefined) user.subject = subject.trim();
+    if (center_name !== undefined) user.center_name = center_name.trim();
+    if (password && password.trim().length >= 3) user.password = password.trim();
+    saveLocalDB(db);
+    return { success: true, data: user, message: 'تم تحديث الملف الشخصي بنجاح' };
+  }
+
+  // --- AUTH CHECK FOR PROTECTED ROUTES ---
+  if (!user) return { success: false, status: 401, error: 'يرجى تسجيل الدخول' };
+  if (user.status === 'blocked') return { success: false, status: 403, error: 'تم إيقاف هذا الحساب' };
+
+  // --- 2. SETTINGS ---
+  if (pathOnly === '/api/settings') {
+    if (method === 'GET') {
+      return { success: true, data: db.settings[user.id] || {} };
+    }
+    if (method === 'POST') {
+      db.settings[user.id] = { ...(db.settings[user.id] || {}), ...body };
+      saveLocalDB(db);
+      return { success: true, message: 'تم حفظ الإعدادات بنجاح' };
+    }
+  }
+
+  // --- 3. GROUPS ---
+  if (pathOnly === '/api/groups') {
+    if (method === 'GET') {
+      const groups = db.groups
+        .filter(g => String(g.user_id) === String(user.id))
+        .map(g => ({
+          ...g,
+          students_count: db.students.filter(s => String(s.group_id) === String(g.id) && s.status === 'active').length
+        }));
+      return { success: true, data: groups };
+    }
+    if (method === 'POST') {
+      const { name, grade, days, time, session_price, monthly_price, notes } = body;
+      if (!name || !grade) return { success: false, error: 'اسم المجموعة والمرحلة الدراسية مطلوبان' };
+      const newGroup = {
+        id: generateLocalId(),
+        user_id: user.id,
+        name: name.trim(),
+        grade: grade.trim(),
+        days: (days || '').trim(),
+        time: (time || '').trim(),
+        session_price: Number(session_price) || 0,
+        monthly_price: Number(monthly_price) || 0,
+        notes: (notes || '').trim(),
+        created_at: new Date().toISOString()
+      };
+      db.groups.push(newGroup);
+      saveLocalDB(db);
+      return { success: true, data: newGroup, message: 'تم إنشاء المجموعة بنجاح' };
+    }
+  }
+
+  if (pathOnly.startsWith('/api/groups/') && pathOnly.split('/').length === 4) {
+    const groupId = pathOnly.split('/')[3];
+    const grpIndex = db.groups.findIndex(g => String(g.id) === String(groupId) && String(g.user_id) === String(user.id));
+    if (grpIndex === -1) return { success: false, error: 'المجموعة غير موجودة' };
+
+    if (method === 'PUT') {
+      const { name, grade, days, time, session_price, monthly_price, notes } = body;
+      db.groups[grpIndex] = {
+        ...db.groups[grpIndex],
+        name: name ? name.trim() : db.groups[grpIndex].name,
+        grade: grade ? grade.trim() : db.groups[grpIndex].grade,
+        days: days !== undefined ? days.trim() : db.groups[grpIndex].days,
+        time: time !== undefined ? time.trim() : db.groups[grpIndex].time,
+        session_price: session_price !== undefined ? Number(session_price) || 0 : db.groups[grpIndex].session_price,
+        monthly_price: monthly_price !== undefined ? Number(monthly_price) || 0 : db.groups[grpIndex].monthly_price,
+        notes: notes !== undefined ? notes.trim() : db.groups[grpIndex].notes
+      };
+      saveLocalDB(db);
+      return { success: true, data: db.groups[grpIndex], message: 'تم تحديث بيانات المجموعة' };
+    }
+
+    if (method === 'DELETE') {
+      db.groups.splice(grpIndex, 1);
+      db.students.forEach(s => {
+        if (String(s.group_id) === String(groupId) && String(s.user_id) === String(user.id)) {
+          s.group_id = null;
+        }
+      });
+      saveLocalDB(db);
+      return { success: true, message: 'تم حذف المجموعة بنجاح' };
+    }
+  }
+
+  // --- 4. STUDENTS ---
+  if (pathOnly === '/api/students/next-code') {
+    const teacherStudents = db.students.filter(s => String(s.user_id) === String(user.id));
+    let nextNum = 1001;
+    teacherStudents.forEach(s => {
+      const parsed = parseInt(s.code, 10);
+      if (!isNaN(parsed) && parsed >= nextNum) nextNum = parsed + 1;
+    });
+    return { success: true, code: String(nextNum) };
+  }
+
+  if (pathOnly === '/api/students') {
+    if (method === 'GET') {
+      const search = (params.get('search') || '').toLowerCase().trim();
+      const groupId = params.get('group_id');
+      const grade = params.get('grade');
+      const status = params.get('status');
+      const hasDebt = params.get('has_debt');
+
+      let list = db.students.filter(s => String(s.user_id) === String(user.id));
+      if (status) list = list.filter(s => s.status === status);
+      if (groupId) list = list.filter(s => String(s.group_id) === String(groupId));
+      if (grade) list = list.filter(s => s.grade === grade);
+      if (hasDebt === 'true') list = list.filter(s => (Number(s.balance) || 0) > 0);
+      if (search) {
+        list = list.filter(s => 
+          (s.name && s.name.toLowerCase().includes(search)) ||
+          (s.code && String(s.code).includes(search)) ||
+          (s.phone && s.phone.includes(search)) ||
+          (s.father_phone && s.father_phone.includes(search)) ||
+          (s.mother_phone && s.mother_phone.includes(search))
+        );
+      }
+
+      const results = list.map(s => {
+        const grp = db.groups.find(g => String(g.id) === String(s.group_id));
+        return {
+          ...s,
+          group_name: grp ? grp.name : null,
+          group_days: grp ? grp.days : null,
+          group_time: grp ? grp.time : null,
+          group_session_price: grp ? grp.session_price : 0
+        };
+      }).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+
+      return { success: true, data: results };
+    }
+
+    if (method === 'POST') {
+      let { code, name, phone, grade, group_id, father_phone, mother_phone, monthly_fee, notes } = body;
+      if (!name || !grade) return { success: false, error: 'اسم الطالب والمرحلة الدراسية مطلوبان' };
+
+      let cleanCode = normalizeClientCode(code);
+      if (!cleanCode) {
+        let maxCode = 1000;
+        db.students.filter(s => String(s.user_id) === String(user.id)).forEach(s => {
+          const n = parseInt(s.code, 10);
+          if (!isNaN(n) && n > maxCode) maxCode = n;
+        });
+        cleanCode = String(maxCode + 1);
+      }
+
+      if (db.students.some(s => String(s.user_id) === String(user.id) && String(s.code) === cleanCode)) {
+        return { success: false, error: 'كود الطالب مسجل مسبقاً، برجاء اختيار كود آخر' };
+      }
+
+      if (!monthly_fee && group_id) {
+        const grp = db.groups.find(g => String(g.id) === String(group_id) && String(g.user_id) === String(user.id));
+        if (grp) monthly_fee = grp.session_price;
+      }
+
+      const newStudent = {
+        id: generateLocalId(),
+        user_id: user.id,
+        code: cleanCode,
+        name: name.trim(),
+        phone: normalizeClientPhone(phone),
+        grade: grade.trim(),
+        group_id: group_id ? String(group_id) : null,
+        father_phone: normalizeClientPhone(father_phone),
+        mother_phone: normalizeClientPhone(mother_phone),
+        monthly_fee: Number(monthly_fee) || 0,
+        balance: 0,
+        notes: (notes || '').trim(),
+        status: 'active',
+        created_at: new Date().toISOString()
+      };
+      db.students.push(newStudent);
+      saveLocalDB(db);
+      return { success: true, data: newStudent, message: 'تم تسجيل الطالب بنجاح' };
+    }
+  }
+
+  if (pathOnly.startsWith('/api/students/') && pathOnly.split('/').length === 4) {
+    const studentId = pathOnly.split('/')[3];
+    const stdIndex = db.students.findIndex(s => String(s.id) === String(studentId) && String(s.user_id) === String(user.id));
+    if (stdIndex === -1) return { success: false, error: 'الطالب غير موجود' };
+
+    if (method === 'GET') {
+      const student = db.students[stdIndex];
+      const grp = db.groups.find(g => String(g.id) === String(student.group_id));
+
+      const history = db.attendance
+        .filter(a => String(a.student_id) === String(studentId) && String(a.user_id) === String(user.id))
+        .map(a => {
+          const sess = db.sessions.find(ss => String(ss.id) === String(a.session_id));
+          const sGrp = sess ? db.groups.find(g => String(g.id) === String(sess.group_id)) : null;
+          return {
+            ...a,
+            session_date: sess ? sess.session_date : '',
+            session_title: sess ? sess.title : '',
+            group_name: sGrp ? sGrp.name : ''
+          };
+        }).sort((a, b) => b.session_date.localeCompare(a.session_date));
+
+      const payments = db.payments
+        .filter(p => String(p.student_id) === String(studentId) && String(p.user_id) === String(user.id))
+        .sort((a, b) => b.date.localeCompare(a.date));
+
+      const handouts = db.student_handouts
+        .filter(sh => String(sh.student_id) === String(studentId) && String(sh.user_id) === String(user.id))
+        .map(sh => {
+          const h = db.handouts.find(hd => String(hd.id) === String(sh.handout_id));
+          return {
+            ...sh,
+            handout_title: h ? h.title : '',
+            handout_price: h ? h.price : 0
+          };
+        }).sort((a, b) => b.delivered_at.localeCompare(a.delivered_at));
+
+      return {
+        success: true,
+        data: {
+          ...student,
+          group_name: grp ? grp.name : null,
+          group_days: grp ? grp.days : null,
+          group_time: grp ? grp.time : null,
+          history,
+          payments,
+          handouts
+        }
+      };
+    }
+
+    if (method === 'PUT') {
+      let { code, name, phone, grade, group_id, father_phone, mother_phone, monthly_fee, balance, notes, status } = body;
+      const cleanCode = normalizeClientCode(code);
+      if (db.students.some(s => String(s.user_id) === String(user.id) && String(s.code) === cleanCode && String(s.id) !== String(studentId))) {
+        return { success: false, error: 'هذا الكود مستخدم لطالب آخر لديك' };
+      }
+
+      db.students[stdIndex] = {
+        ...db.students[stdIndex],
+        code: cleanCode || db.students[stdIndex].code,
+        name: name ? name.trim() : db.students[stdIndex].name,
+        phone: phone !== undefined ? normalizeClientPhone(phone) : db.students[stdIndex].phone,
+        grade: grade ? grade.trim() : db.students[stdIndex].grade,
+        group_id: group_id !== undefined ? (group_id ? String(group_id) : null) : db.students[stdIndex].group_id,
+        father_phone: father_phone !== undefined ? normalizeClientPhone(father_phone) : db.students[stdIndex].father_phone,
+        mother_phone: mother_phone !== undefined ? normalizeClientPhone(mother_phone) : db.students[stdIndex].mother_phone,
+        monthly_fee: monthly_fee !== undefined ? Number(monthly_fee) || 0 : db.students[stdIndex].monthly_fee,
+        balance: balance !== undefined ? Number(balance) || 0 : db.students[stdIndex].balance,
+        notes: notes !== undefined ? notes.trim() : db.students[stdIndex].notes,
+        status: status || db.students[stdIndex].status
+      };
+      saveLocalDB(db);
+      return { success: true, data: db.students[stdIndex], message: 'تم تحديث بيانات الطالب' };
+    }
+
+    if (method === 'DELETE') {
+      db.students.splice(stdIndex, 1);
+      db.attendance = db.attendance.filter(a => String(a.student_id) !== String(studentId));
+      db.payments = db.payments.filter(p => String(p.student_id) !== String(studentId));
+      db.student_handouts = db.student_handouts.filter(sh => String(sh.student_id) !== String(studentId));
+      saveLocalDB(db);
+      return { success: true, message: 'تم حذف الطالب وسجلاته بنجاح' };
+    }
+  }
+
+  // --- 5. SESSIONS & ATTENDANCE ---
+  if (pathOnly === '/api/sessions' && method === 'POST') {
+    const { group_id, session_date, title, notes } = body;
+    if (!group_id || !session_date) return { success: false, error: 'المجموعة وتاريخ الحصة مطلوبان' };
+
+    const grp = db.groups.find(g => String(g.id) === String(group_id) && String(g.user_id) === String(user.id));
+    if (!grp) return { success: false, error: 'المجموعة غير موجودة' };
+
+    let session = db.sessions.find(s => String(s.group_id) === String(group_id) && s.session_date === session_date && String(s.user_id) === String(user.id));
+    if (!session) {
+      session = {
+        id: generateLocalId(),
+        user_id: user.id,
+        group_id: String(group_id),
+        session_date,
+        title: title || `حصة يوم ${session_date}`,
+        notes: (notes || '').trim(),
+        status: 'active',
+        created_at: new Date().toISOString()
+      };
+      db.sessions.push(session);
+
+      const groupStudents = db.students.filter(s => String(s.group_id) === String(group_id) && s.status === 'active' && String(s.user_id) === String(user.id));
+      groupStudents.forEach(st => {
+        const cost = st.monthly_fee > 0 ? st.monthly_fee : (grp.session_price || 0);
+        db.attendance.push({
+          id: generateLocalId(),
+          user_id: user.id,
+          session_id: session.id,
+          student_id: st.id,
+          status: 'absent',
+          check_in_time: null,
+          paid_amount: 0,
+          remaining_amount: cost,
+          homework: 'done',
+          quiz_score: null,
+          max_quiz_score: 10,
+          received_handout: 0,
+          notes: '',
+          created_at: new Date().toISOString()
+        });
+      });
+      saveLocalDB(db);
+    }
+    return { success: true, data: session };
+  }
+
+  if (pathOnly.startsWith('/api/sessions/') && pathOnly.endsWith('/checkin') && method === 'POST') {
+    const parts = pathOnly.split('/');
+    const sessionId = parts[3];
+    const { code, paid_amount, status } = body;
+    if (!code) return { success: false, error: 'كود الطالب مطلوب' };
+
+    const cleanCode = normalizeClientCode(code);
+    const student = db.students.find(s => String(s.user_id) === String(user.id) && (String(s.code) === cleanCode || String(s.id) === cleanCode));
+    if (!student) return { success: false, error: 'كود الطالب غير صحيح أو غير مسجل لديك' };
+
+    const session = db.sessions.find(s => String(s.id) === String(sessionId) && String(s.user_id) === String(user.id));
+    if (!session) return { success: false, error: 'الحصة غير موجودة' };
+    const grp = db.groups.find(g => String(g.id) === String(session.group_id));
+
+    const fee = student.monthly_fee > 0 ? student.monthly_fee : (grp ? grp.session_price : 0);
+    const paid = paid_amount !== undefined ? Number(paid_amount) : fee;
+    const remaining = Math.max(0, fee - paid);
+
+    const now = new Date();
+    const checkInTime = now.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+    let att = db.attendance.find(a => String(a.session_id) === String(sessionId) && String(a.student_id) === String(student.id) && String(a.user_id) === String(user.id));
+    if (att) {
+      const prevRemaining = att.remaining_amount || 0;
+      att.status = status || 'present';
+      att.check_in_time = checkInTime;
+      att.paid_amount = paid;
+      att.remaining_amount = remaining;
+      student.balance = (student.balance || 0) - prevRemaining + remaining;
+    } else {
+      att = {
+        id: generateLocalId(),
+        user_id: user.id,
+        session_id: sessionId,
+        student_id: student.id,
+        status: status || 'present',
+        check_in_time: checkInTime,
+        paid_amount: paid,
+        remaining_amount: remaining,
+        homework: 'done',
+        quiz_score: null,
+        max_quiz_score: 10,
+        received_handout: 0,
+        notes: '',
+        created_at: new Date().toISOString()
+      };
+      db.attendance.push(att);
+      student.balance = (student.balance || 0) + remaining;
+    }
+
+    saveLocalDB(db);
+    return {
+      success: true,
+      message: `تم تسجيل حضور: ${student.name}`,
+      data: { student, attendance: att, paid, remaining }
+    };
+  }
+
+  if (pathOnly.startsWith('/api/sessions/') && pathOnly.split('/').length === 4 && method === 'GET') {
+    const sessionId = pathOnly.split('/')[3];
+    const session = db.sessions.find(s => String(s.id) === String(sessionId) && String(s.user_id) === String(user.id));
+    if (!session) return { success: false, error: 'الحصة غير موجودة' };
+
+    const grp = db.groups.find(g => String(g.id) === String(session.group_id));
+
+    // Ensure any new student in group has an attendance row
+    const groupStudents = db.students.filter(s => String(s.group_id) === String(session.group_id) && s.status === 'active' && String(s.user_id) === String(user.id));
+    groupStudents.forEach(st => {
+      let exists = db.attendance.some(a => String(a.session_id) === String(sessionId) && String(a.student_id) === String(st.id) && String(a.user_id) === String(user.id));
+      if (!exists) {
+        const cost = st.monthly_fee > 0 ? st.monthly_fee : (grp ? grp.session_price : 0);
+        db.attendance.push({
+          id: generateLocalId(),
+          user_id: user.id,
+          session_id: sessionId,
+          student_id: st.id,
+          status: 'absent',
+          check_in_time: null,
+          paid_amount: 0,
+          remaining_amount: cost,
+          homework: 'done',
+          quiz_score: null,
+          max_quiz_score: 10,
+          received_handout: 0,
+          notes: '',
+          created_at: new Date().toISOString()
+        });
+      }
+    });
+
+    const records = db.attendance
+      .filter(a => String(a.session_id) === String(sessionId) && String(a.user_id) === String(user.id))
+      .map(a => {
+        const st = db.students.find(s => String(s.id) === String(a.student_id));
+        return {
+          attendance_id: a.id,
+          attendance_status: a.status,
+          check_in_time: a.check_in_time,
+          paid_amount: a.paid_amount,
+          remaining_amount: a.remaining_amount,
+          homework: a.homework,
+          quiz_score: a.quiz_score,
+          max_quiz_score: a.max_quiz_score,
+          received_handout: a.received_handout,
+          attendance_notes: a.notes,
+          student_id: st ? st.id : null,
+          student_code: st ? st.code : '',
+          student_name: st ? st.name : 'طالب محذوف',
+          student_phone: st ? st.phone : '',
+          father_phone: st ? st.father_phone : '',
+          mother_phone: st ? st.mother_phone : '',
+          student_balance: st ? st.balance : 0,
+          monthly_fee: st ? st.monthly_fee : 0
+        };
+      }).sort((a, b) => {
+        const order = { present: 1, late: 2, excused: 3, absent: 4 };
+        const oA = order[a.attendance_status] || 5;
+        const oB = order[b.attendance_status] || 5;
+        if (oA !== oB) return oA - oB;
+        return a.student_name.localeCompare(b.student_name, 'ar');
+      });
+
+    const totalStudents = records.length;
+    const presentCount = records.filter(r => r.attendance_status === 'present').length;
+    const lateCount = records.filter(r => r.attendance_status === 'late').length;
+    const excusedCount = records.filter(r => r.attendance_status === 'excused').length;
+    const absentCount = records.filter(r => r.attendance_status === 'absent').length;
+    const totalPaid = records.reduce((sum, r) => sum + (Number(r.paid_amount) || 0), 0);
+    const totalRemaining = records.reduce((sum, r) => sum + (Number(r.remaining_amount) || 0), 0);
+    const absentees = records.filter(r => r.attendance_status === 'absent');
+
+    return {
+      success: true,
+      data: {
+        session: { ...session, group_name: grp ? grp.name : '', session_price: grp ? grp.session_price : 0 },
+        records,
+        stats: {
+          totalStudents,
+          presentCount,
+          lateCount,
+          excusedCount,
+          absentCount,
+          attendanceRate: totalStudents > 0 ? Math.round(((presentCount + lateCount) / totalStudents) * 100) : 0,
+          totalPaid,
+          totalRemaining
+        },
+        absentees
+      }
+    };
+  }
+
+  if (pathOnly.startsWith('/api/attendance/') && method === 'PUT') {
+    const attId = pathOnly.split('/')[3];
+    const attIndex = db.attendance.findIndex(a => String(a.id) === String(attId) && String(a.user_id) === String(user.id));
+    if (attIndex === -1) return { success: false, error: 'سجل الحضور غير موجود' };
+
+    const att = db.attendance[attIndex];
+    const student = db.students.find(s => String(s.id) === String(att.student_id));
+
+    if (body.status !== undefined) att.status = body.status;
+    if (body.check_in_time !== undefined) att.check_in_time = body.check_in_time;
+    if (body.homework !== undefined) att.homework = body.homework;
+    if (body.quiz_score !== undefined) att.quiz_score = body.quiz_score !== null && body.quiz_score !== '' ? Number(body.quiz_score) : null;
+    if (body.max_quiz_score !== undefined) att.max_quiz_score = Number(body.max_quiz_score) || 10;
+    if (body.received_handout !== undefined) att.received_handout = Number(body.received_handout) || 0;
+    if (body.notes !== undefined) att.notes = body.notes;
+
+    if (body.paid_amount !== undefined || body.remaining_amount !== undefined) {
+      const prevRemaining = att.remaining_amount || 0;
+      if (body.paid_amount !== undefined) att.paid_amount = Number(body.paid_amount) || 0;
+      if (body.remaining_amount !== undefined) att.remaining_amount = Number(body.remaining_amount) || 0;
+      if (student) {
+        student.balance = (student.balance || 0) - prevRemaining + att.remaining_amount;
+      }
+    }
+
+    saveLocalDB(db);
+    return { success: true, message: 'تم تحديث الحضور بنجاح' };
+  }
+
+  // --- 6. PAYMENTS ---
+  if (pathOnly === '/api/payments') {
+    if (method === 'GET') {
+      const payments = db.payments
+        .filter(p => String(p.user_id) === String(user.id))
+        .map(p => {
+          const st = db.students.find(s => String(s.id) === String(p.student_id));
+          return { ...p, student_name: st ? st.name : 'طالب محذوف', student_code: st ? st.code : '' };
+        }).sort((a, b) => b.date.localeCompare(a.date));
+      return { success: true, data: payments };
+    }
+
+    if (method === 'POST') {
+      const { student_id, amount, date, type, notes } = body;
+      if (!student_id || !amount) return { success: false, error: 'الطالب والمبلغ مطلوبان' };
+      const student = db.students.find(s => String(s.id) === String(student_id) && String(s.user_id) === String(user.id));
+      if (!student) return { success: false, error: 'الطالب غير موجود' };
+
+      const numAmount = Number(amount) || 0;
+      const payment = {
+        id: generateLocalId(),
+        user_id: user.id,
+        student_id: String(student_id),
+        amount: numAmount,
+        date: date || new Date().toISOString().split('T')[0],
+        type: type || 'تسوية مستحقات',
+        notes: (notes || '').trim(),
+        created_at: new Date().toISOString()
+      };
+      db.payments.push(payment);
+      student.balance = Math.max(0, (student.balance || 0) - numAmount);
+      saveLocalDB(db);
+      return { success: true, data: payment, message: 'تم تسجيل الدفعة بنجاح' };
+    }
+  }
+
+  if (pathOnly.startsWith('/api/payments/') && method === 'DELETE') {
+    const paymentId = pathOnly.split('/')[3];
+    const pIndex = db.payments.findIndex(p => String(p.id) === String(paymentId) && String(p.user_id) === String(user.id));
+    if (pIndex !== -1) {
+      const payment = db.payments[pIndex];
+      const student = db.students.find(s => String(s.id) === String(payment.student_id));
+      if (student) student.balance = (student.balance || 0) + (payment.amount || 0);
+      db.payments.splice(pIndex, 1);
+      saveLocalDB(db);
+    }
+    return { success: true, message: 'تم حذف الدفعة' };
+  }
+
+  // --- 7. EXPENSES ---
+  if (pathOnly === '/api/expenses') {
+    if (method === 'GET') {
+      const expenses = db.expenses
+        .filter(e => String(e.user_id) === String(user.id))
+        .sort((a, b) => b.date.localeCompare(a.date));
+      return { success: true, data: expenses };
+    }
+    if (method === 'POST') {
+      const { title, amount, category, date, notes } = body;
+      if (!title || !amount) return { success: false, error: 'اسم المصروف والمبلغ مطلوبان' };
+      const expense = {
+        id: generateLocalId(),
+        user_id: user.id,
+        title: title.trim(),
+        amount: Number(amount) || 0,
+        category: category || 'عام',
+        date: date || new Date().toISOString().split('T')[0],
+        notes: (notes || '').trim(),
+        created_at: new Date().toISOString()
+      };
+      db.expenses.push(expense);
+      saveLocalDB(db);
+      return { success: true, data: expense, message: 'تم تسجيل المصروف بنجاح' };
+    }
+  }
+
+  if (pathOnly.startsWith('/api/expenses/') && method === 'DELETE') {
+    const expenseId = pathOnly.split('/')[3];
+    db.expenses = db.expenses.filter(e => !(String(e.id) === String(expenseId) && String(e.user_id) === String(user.id)));
+    saveLocalDB(db);
+    return { success: true, message: 'تم حذف المصروف بنجاح' };
+  }
+
+  // --- 8. HANDOUTS (الملازم والمذكرات) ---
+  if (pathOnly === '/api/handouts') {
+    if (method === 'GET') {
+      const handouts = db.handouts
+        .filter(h => String(h.user_id) === String(user.id))
+        .map(h => ({
+          ...h,
+          delivered_count: db.student_handouts.filter(sh => String(sh.handout_id) === String(h.id)).length
+        }));
+      return { success: true, data: handouts };
+    }
+    if (method === 'POST') {
+      const { title, grade, price, description, total_copies } = body;
+      if (!title || !grade) return { success: false, error: 'عنوان المذكرة والمرحلة مطلوبان' };
+      const handout = {
+        id: generateLocalId(),
+        user_id: user.id,
+        title: title.trim(),
+        grade: grade.trim(),
+        price: Number(price) || 0,
+        description: (description || '').trim(),
+        total_copies: Number(total_copies) || 0,
+        created_at: new Date().toISOString()
+      };
+      db.handouts.push(handout);
+      saveLocalDB(db);
+      return { success: true, data: handout, message: 'تمت إضافة المذكرة بنجاح' };
+    }
+  }
+
+  if (pathOnly.startsWith('/api/handouts/') && method === 'DELETE') {
+    const handoutId = pathOnly.split('/')[3];
+    db.handouts = db.handouts.filter(h => !(String(h.id) === String(handoutId) && String(h.user_id) === String(user.id)));
+    db.student_handouts = db.student_handouts.filter(sh => !(String(sh.handout_id) === String(handoutId) && String(sh.user_id) === String(user.id)));
+    saveLocalDB(db);
+    return { success: true, message: 'تم حذف المذكرة بنجاح' };
+  }
+
+  if (pathOnly === '/api/handouts/deliver' && method === 'POST') {
+    const { handout_id, student_id, paid_amount } = body;
+    const handout = db.handouts.find(h => String(h.id) === String(handout_id) && String(h.user_id) === String(user.id));
+    const student = db.students.find(s => String(s.id) === String(student_id) && String(s.user_id) === String(user.id));
+    if (!handout || !student) return { success: false, error: 'المذكرة أو الطالب غير موجود' };
+
+    const price = handout.price || 0;
+    const paid = paid_amount !== undefined ? Number(paid_amount) || 0 : price;
+    const remaining = Math.max(0, price - paid);
+
+    db.student_handouts.push({
+      id: generateLocalId(),
+      user_id: user.id,
+      handout_id: String(handout_id),
+      student_id: String(student_id),
+      paid_amount: paid,
+      remaining_amount: remaining,
+      delivered_at: new Date().toISOString()
+    });
+
+    if (remaining > 0) {
+      student.balance = (student.balance || 0) + remaining;
+    }
+    saveLocalDB(db);
+    return { success: true, message: 'تم تسليم المذكرة للطالب بنجاح' };
+  }
+
+  // --- 9. DASHBOARD REPORTS ---
+  if (pathOnly === '/api/reports/dashboard') {
+    const teacherStudents = db.students.filter(s => String(s.user_id) === String(user.id) && s.status === 'active');
+    const teacherGroups = db.groups.filter(g => String(g.user_id) === String(user.id));
+    const teacherAttendance = db.attendance.filter(a => String(a.user_id) === String(user.id));
+    const teacherPayments = db.payments.filter(p => String(p.user_id) === String(user.id));
+    const teacherExpenses = db.expenses.filter(e => String(e.user_id) === String(user.id));
+    const teacherHandouts = db.student_handouts.filter(sh => String(sh.user_id) === String(user.id));
+
+    const totalStudents = teacherStudents.length;
+    const totalGroups = teacherGroups.length;
+    const attendanceIncome = teacherAttendance.reduce((sum, a) => sum + (Number(a.paid_amount) || 0), 0);
+    const handoutsIncome = teacherHandouts.reduce((sum, sh) => sum + (Number(sh.paid_amount) || 0), 0);
+    const directPaymentsIncome = teacherPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const totalIncome = attendanceIncome + handoutsIncome + directPaymentsIncome;
+    const totalExpenses = teacherExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    const netProfit = totalIncome - totalExpenses;
+    const totalDebts = teacherStudents.reduce((sum, s) => sum + (Number(s.balance) || 0), 0);
+
+    const totalRecords = teacherAttendance.length;
+    const presentRecords = teacherAttendance.filter(a => a.status === 'present' || a.status === 'late').length;
+    const attendanceRate = totalRecords > 0 ? Math.round((presentRecords / totalRecords) * 100) : 0;
+
+    return {
+      success: true,
+      data: {
+        totalStudents,
+        totalGroups,
+        totalIncome,
+        totalExpenses,
+        netProfit,
+        totalDebts,
+        attendanceRate
+      }
+    };
+  }
+
+  // --- 10. ADMIN DASHBOARD & CONTROLS ---
+  if (pathOnly === '/api/admin/overview') {
+    if (user.role !== 'admin') return { success: false, status: 403, error: 'غير مصرح' };
+    const teachers = db.users.filter(u => u.role !== 'admin');
+    const totalTeachers = teachers.length;
+    const activeTeachers = teachers.filter(u => u.status === 'active' || !u.status).length;
+    const blockedTeachers = teachers.filter(u => u.status === 'blocked').length;
+    const totalStudents = db.students.length;
+    const totalSessions = db.sessions.length;
+
+    const totalAttendancePaid = db.attendance.reduce((sum, a) => sum + (Number(a.paid_amount) || 0), 0);
+    const totalHandoutsPaid = db.student_handouts.reduce((sum, sh) => sum + (Number(sh.paid_amount) || 0), 0);
+    const totalPaymentsPaid = db.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const totalPlatformVolume = totalAttendancePaid + totalHandoutsPaid + totalPaymentsPaid;
+    const commissionRate = 10;
+    const platformProfit = Math.round(totalPlatformVolume * (commissionRate / 100));
+
+    return {
+      success: true,
+      data: {
+        totalTeachers,
+        activeTeachers,
+        blockedTeachers,
+        totalStudents,
+        totalSessions,
+        totalPlatformVolume,
+        commissionRate,
+        platformProfit
+      }
+    };
+  }
+
+  if (pathOnly === '/api/admin/teachers') {
+    if (user.role !== 'admin') return { success: false, status: 403, error: 'غير مصرح' };
+    const teachers = db.users.filter(u => u.role !== 'admin').map(t => {
+      const sCount = db.students.filter(s => String(s.user_id) === String(t.id)).length;
+      const gCount = db.groups.filter(g => String(g.user_id) === String(t.id)).length;
+      const collected = db.attendance.filter(a => String(a.user_id) === String(t.id)).reduce((s, a) => s + (Number(a.paid_amount) || 0), 0);
+      return {
+        id: t.id,
+        name: t.name,
+        phone: t.phone,
+        subject: t.subject,
+        center_name: t.center_name,
+        role: t.role,
+        status: t.status || 'active',
+        created_at: t.created_at,
+        students_count: sCount,
+        groups_count: gCount,
+        total_collected: collected
+      };
+    });
+    return { success: true, data: teachers };
+  }
+
+  if (pathOnly.startsWith('/api/admin/teachers/') && pathOnly.endsWith('/toggle-status') && method === 'PUT') {
+    if (user.role !== 'admin') return { success: false, status: 403, error: 'غير مصرح' };
+    const teacherId = pathOnly.split('/')[4];
+    const t = db.users.find(u => String(u.id) === String(teacherId));
+    if (!t) return { success: false, error: 'المعلم غير موجود' };
+    t.status = t.status === 'blocked' ? 'active' : 'blocked';
+    saveLocalDB(db);
+    return { success: true, new_status: t.status, message: `تم ${t.status === 'blocked' ? 'إيقاف' : 'تفعيل'} الحساب بنجاح` };
+  }
+
+  if (pathOnly.startsWith('/api/admin/teachers/') && pathOnly.split('/').length === 5 && method === 'DELETE') {
+    if (user.role !== 'admin') return { success: false, status: 403, error: 'غير مصرح' };
+    const teacherId = pathOnly.split('/')[4];
+    db.users = db.users.filter(u => String(u.id) !== String(teacherId));
+    db.groups = db.groups.filter(g => String(g.user_id) !== String(teacherId));
+    db.students = db.students.filter(s => String(s.user_id) !== String(teacherId));
+    db.sessions = db.sessions.filter(s => String(s.user_id) !== String(teacherId));
+    db.attendance = db.attendance.filter(a => String(a.user_id) !== String(teacherId));
+    db.payments = db.payments.filter(p => String(p.user_id) !== String(teacherId));
+    db.expenses = db.expenses.filter(e => String(e.user_id) !== String(teacherId));
+    db.handouts = db.handouts.filter(h => String(h.user_id) !== String(teacherId));
+    db.student_handouts = db.student_handouts.filter(sh => String(sh.user_id) !== String(teacherId));
+    saveLocalDB(db);
+    return { success: true, message: 'تم حذف حساب المدرس وكافة بياناته نهائياً' };
+  }
+
+  // --- 11. CHAT MESSAGING (شات الإدارة والمدرسين) ---
+  if (pathOnly === '/api/chat/conversations') {
+    if (user.role !== 'admin') return { success: false, status: 403 };
+    const teachers = db.users.filter(u => u.role !== 'admin').map(t => {
+      const msgs = db.messages.filter(m => (String(m.sender_id) === String(t.id) && String(m.receiver_id) === String(user.id)) || (String(m.sender_id) === String(user.id) && String(m.receiver_id) === String(t.id)));
+      const lastMsg = msgs[msgs.length - 1];
+      const unreadCount = db.messages.filter(m => String(m.sender_id) === String(t.id) && String(m.receiver_id) === String(user.id) && !m.is_read).length;
+      return {
+        id: t.id,
+        name: t.name,
+        phone: t.phone,
+        subject: t.subject,
+        status: t.status,
+        last_message: lastMsg ? lastMsg.message : '',
+        last_message_date: lastMsg ? lastMsg.created_at : '',
+        unread_count: unreadCount
+      };
+    }).sort((a, b) => b.unread_count - a.unread_count);
+    return { success: true, data: teachers };
+  }
+
+  if (pathOnly === '/api/chat/messages') {
+    if (method === 'GET') {
+      let otherUserId = params.get('teacher_id');
+      if (user.role !== 'admin') {
+        const admin = db.users.find(u => u.role === 'admin');
+        otherUserId = admin ? admin.id : null;
+      }
+      if (!otherUserId) return { success: true, data: [] };
+
+      // Mark received messages as read
+      db.messages.forEach(m => {
+        if (String(m.receiver_id) === String(user.id) && String(m.sender_id) === String(otherUserId)) {
+          m.is_read = true;
+        }
+      });
+      saveLocalDB(db);
+
+      const conversation = db.messages.filter(m => 
+        (String(m.sender_id) === String(user.id) && String(m.receiver_id) === String(otherUserId)) ||
+        (String(m.sender_id) === String(otherUserId) && String(m.receiver_id) === String(user.id))
+      ).map(m => {
+        const sender = db.users.find(u => String(u.id) === String(m.sender_id));
+        return {
+          ...m,
+          sender_name: sender ? sender.name : 'مستخدم',
+          sender_role: sender ? sender.role : 'teacher'
+        };
+      });
+      return { success: true, data: conversation };
+    }
+
+    if (method === 'POST') {
+      const { message, receiver_id } = body;
+      if (!message || !message.trim()) return { success: false, error: 'نص الرسالة مطلوب' };
+
+      let targetReceiverId = receiver_id;
+      if (user.role !== 'admin') {
+        const admin = db.users.find(u => u.role === 'admin');
+        if (!admin) return { success: false, error: 'حساب الإدارة غير متاح حالياً' };
+        targetReceiverId = admin.id;
+      } else {
+        if (!targetReceiverId) return { success: false, error: 'برجاء اختيار المدرس المستلم' };
+      }
+
+      const newMsg = {
+        id: generateLocalId(),
+        sender_id: user.id,
+        receiver_id: String(targetReceiverId),
+        message: message.trim(),
+        is_read: false,
+        created_at: new Date().toISOString()
+      };
+      db.messages.push(newMsg);
+      saveLocalDB(db);
+
+      return {
+        success: true,
+        data: {
+          ...newMsg,
+          sender_name: user.name,
+          sender_role: user.role
+        }
+      };
+    }
+  }
+
+  if (pathOnly === '/api/chat/unread-count') {
+    const count = db.messages.filter(m => String(m.receiver_id) === String(user.id) && !m.is_read).length;
+    return { success: true, unread_count: count };
+  }
+
+  return { success: true };
+}
+
+// ==========================================
+// 1. API HELPER WITH LOCAL STORAGE ROUTER
+// ==========================================
+async function apiFetch(endpoint, options = {}) {
+  try {
+    const res = await clientStorageRouter(endpoint, options);
+    if (res && res.status === 401) {
+      handleUnauthorized();
+      throw new Error(res.error || 'جلسة تسجيل الدخول منتهية');
+    }
+    return res;
   } catch (err) {
     throw err;
   }
@@ -195,12 +1208,10 @@ async function handleRegister(event) {
   submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري إنشاء الحساب...';
 
   try {
-    const res = await fetch('/api/auth/register', {
+    const json = await apiFetch('/api/auth/register', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, phone, password, confirmPassword, subject, center_name })
     });
-    const json = await res.json();
 
     if (json.success && json.data) {
       authToken = json.data.token;
@@ -230,12 +1241,10 @@ async function handleLogin(event) {
   submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري التحقق...';
 
   try {
-    const res = await fetch('/api/auth/login', {
+    const json = await apiFetch('/api/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, password })
     });
-    const json = await res.json();
 
     if (json.success && json.data) {
       authToken = json.data.token;
@@ -1631,13 +2640,46 @@ async function saveSettings(event) {
 }
 
 function downloadDataBackup() {
-  if (!authToken) return;
-  window.open(`/api/backup?token=${encodeURIComponent(authToken)}`, '_blank');
-  showToast('جاري تجهيز وتحميل النسخة الاحتياطية...', 'info');
+  try {
+    const db = getLocalDB();
+    const jsonStr = JSON.stringify(db, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `teacher_os_backup_${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('تم حفظ وتحميل النسخة الاحتياطية بنجاح!', 'success');
+  } catch (err) {
+    showToast('تعذر تحميل النسخة الاحتياطية: ' + err.message, 'error');
+  }
+}
+
+function restoreDataBackup(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      if (parsed.users && Array.isArray(parsed.users)) {
+        saveLocalDB(parsed);
+        showToast('تم استعادة النسخة الاحتياطية بنجاح! جاري التحديث...', 'success');
+        setTimeout(() => location.reload(), 900);
+      } else {
+        showToast('ملف النسخة الاحتياطية غير صالح', 'error');
+      }
+    } catch (err) {
+      showToast('تعذر استعادة الملف: ' + err.message, 'error');
+    }
+  };
+  reader.readAsText(file);
 }
 
 // ==========================================
-// 14. EXCEL IMPORT & EXPORT
+// 14. EXCEL IMPORT & EXPORT (Client-Side SheetJS)
 // ==========================================
 function openImportExcelModal() {
   document.getElementById('importExcelModal').classList.remove('hidden');
@@ -1655,39 +2697,148 @@ async function submitImportExcel(event) {
     return;
   }
 
-  const formData = new FormData();
-  formData.append('file', fileInput.files[0]);
+  const file = fileInput.files[0];
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      if (typeof XLSX === 'undefined') {
+        showToast('مكتبة الإكسيل غير محملة، تأكد من الاتصال بالإنترنت', 'error');
+        return;
+      }
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(worksheet);
 
-  try {
-    showToast('جاري رفع واستيراد الطلاب...', 'info');
-    const res = await apiFetch('/api/import/students-excel', {
-      method: 'POST',
-      body: formData
-    });
+      if (!rows || rows.length === 0) {
+        showToast('الملف فارغ أو لا يحتوي على صفوف صالحة', 'warning');
+        return;
+      }
 
-    if (res.success) {
-      showToast(res.message, 'success');
+      const db = getLocalDB();
+      let lastCode = 1000;
+      db.students.filter(s => String(s.user_id) === String(currentUser.id)).forEach(s => {
+        const c = parseInt(s.code, 10);
+        if (!isNaN(c) && c > lastCode) lastCode = c;
+      });
+
+      let insertedCount = 0;
+      rows.forEach(r => {
+        const name = r['اسم الطالب'] || r['الاسم'] || r['Name'] || r['name'];
+        if (!name) return;
+
+        let code = r['كود الطالب'] || r['الكود'] || r['Code'] || r['code'];
+        if (!code) {
+          lastCode++;
+          code = String(lastCode);
+        } else {
+          code = normalizeClientCode(code);
+        }
+
+        if (db.students.some(s => String(s.user_id) === String(currentUser.id) && String(s.code) === String(code))) {
+          lastCode++;
+          code = String(lastCode);
+        }
+
+        const phone = normalizeClientPhone(r['هاتف الطالب'] || r['رقم الطالب'] || r['Phone'] || '');
+        const grade = String(r['المرحلة الدراسية'] || r['السنة'] || r['Grade'] || 'الصف الأول الثانوي').trim();
+        const father = normalizeClientPhone(r['هاتف الأب'] || r['رقم الأب'] || r['Father'] || '');
+        const mother = normalizeClientPhone(r['هاتف الأم'] || r['رقم الأم'] || r['Mother'] || '');
+        const fee = Number(r['قيمة الحصة'] || r['الاشتراك'] || r['Fee'] || 0);
+        const notes = String(r['ملاحظات'] || r['Notes'] || '').trim();
+
+        db.students.push({
+          id: generateLocalId(),
+          user_id: currentUser.id,
+          code,
+          name: String(name).trim(),
+          phone,
+          grade,
+          group_id: null,
+          father_phone: father,
+          mother_phone: mother,
+          monthly_fee: fee,
+          balance: 0,
+          notes,
+          status: 'active',
+          created_at: new Date().toISOString()
+        });
+        insertedCount++;
+      });
+
+      saveLocalDB(db);
+      showToast(`تم استيراد ${insertedCount} طالب بنجاح!`, 'success');
       closeImportExcelModal();
-      await loadStudentsList();
-    } else {
-      showToast(res.error || 'فشل الاستيراد', 'error');
+      loadStudentsList();
+    } catch (err) {
+      showToast('خطأ أثناء قراءة ملف الإكسيل: ' + err.message, 'error');
     }
-  } catch (err) {
-    showToast(err.message, 'error');
-  }
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 function exportStudentsExcel() {
-  if (!authToken) return;
-  window.open(`/api/export/students-excel?token=${encodeURIComponent(authToken)}`, '_blank');
+  if (!allStudents || allStudents.length === 0) {
+    showToast('لا يوجد طلاب لتصديرهم حالياً', 'warning');
+    return;
+  }
+  if (typeof XLSX === 'undefined') {
+    showToast('مكتبة الإكسيل غير محملة', 'error');
+    return;
+  }
+
+  const rows = allStudents.map(s => ({
+    'كود الطالب': s.code,
+    'اسم الطالب': s.name,
+    'المرحلة الدراسية': s.grade,
+    'المجموعة': s.group_name || '',
+    'هاتف الطالب': s.phone || '',
+    'هاتف ولي الأمر (الأب)': s.father_phone || '',
+    'هاتف الأم': s.mother_phone || '',
+    'المستحقات المتبقية (جنيه)': s.balance || 0,
+    'قيمة الحصة': s.monthly_fee || 0,
+    'الحالة': s.status === 'active' ? 'نشط' : 'متوقف',
+    'ملاحظات': s.notes || ''
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'قائمة الطلاب');
+  XLSX.writeFile(wb, `قائمة_الطلاب_${new Date().toISOString().split('T')[0]}.xlsx`);
+  showToast('تم تصدير ملف الإكسيل بنجاح!', 'success');
 }
 
 function exportCurrentSessionExcel() {
-  if (!currentSession) {
-    showToast('برجاء اختيار الحصة أولاً', 'warning');
+  if (!currentSession || !currentSessionData || !currentSessionData.records || currentSessionData.records.length === 0) {
+    showToast('برجاء اختيار الحصة أولاً وبدء تسجيل الحضور', 'warning');
     return;
   }
-  window.open(`/api/export/session-excel/${currentSession.id}?token=${encodeURIComponent(authToken)}`, '_blank');
+  if (typeof XLSX === 'undefined') {
+    showToast('مكتبة الإكسيل غير محملة', 'error');
+    return;
+  }
+
+  const rows = currentSessionData.records.map(r => ({
+    'كود الطالب': r.student_code,
+    'اسم الطالب': r.student_name,
+    'حالة الحضور': r.attendance_status === 'present' ? 'حاضر' : (r.attendance_status === 'late' ? 'متأخر' : (r.attendance_status === 'excused' ? 'معتذر' : 'غائب')),
+    'وقت الحضور': r.check_in_time || '-',
+    'المبلغ المدفوع': r.paid_amount || 0,
+    'المتبقي': r.remaining_amount || 0,
+    'الواجب': r.homework || '-',
+    'درجة الكويز': r.quiz_score !== null ? `${r.quiz_score}/${r.max_quiz_score || 10}` : '-',
+    'استلم مذكرة': r.received_handout ? 'نعم' : 'لا',
+    'هاتف الطالب': r.student_phone || '',
+    'هاتف الأب': r.father_phone || '',
+    'ملاحظات': r.attendance_notes || ''
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'حضور الحصة');
+  XLSX.writeFile(wb, `حضور_${currentSession.group_name || 'حصة'}_${currentSession.session_date}.xlsx`);
+  showToast('تم تصدير كشف الحضور إكسيل بنجاح!', 'success');
 }
 
 function printCurrentSessionSheet() {
