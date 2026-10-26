@@ -1153,7 +1153,8 @@ function getLocalIpAddresses() {
 
 module.exports = app;
 
-if (!process.env.VERCEL) {
+// Only start standalone server if run directly (node server.js)
+if (require.main === module) {
   app.listen(PORT, '0.0.0.0', () => {
     const localIps = getLocalIpAddresses();
     console.log(`=======================================================`);
