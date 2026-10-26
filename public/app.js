@@ -146,6 +146,33 @@ function togglePasswordVisibility(fieldId) {
   }
 }
 
+function normalizeClientPhone(str) {
+  if (!str) return '';
+  let s = String(str).trim();
+  if (s.toLowerCase() === 'admin') return 'admin';
+  s = s.replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+  s = s.replace(/[\s\-\(\)\.]/g, '');
+  if (s.startsWith('+20')) {
+    s = '0' + s.slice(3);
+  } else if (s.startsWith('0020')) {
+    s = '0' + s.slice(4);
+  } else if (s.startsWith('20') && s.length === 12 && ['10', '11', '12', '15'].includes(s.slice(2, 4))) {
+    s = '0' + s.slice(2);
+  } else if (s.startsWith('+')) {
+    s = s.slice(1);
+  }
+  s = s.replace(/\D/g, '');
+  return s;
+}
+
+function normalizeClientCode(str) {
+  if (!str) return '';
+  let s = String(str).trim();
+  s = s.replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+  s = s.replace(/[\s\r\n\t]/g, '');
+  return s;
+}
+
 // Handle Register Submit
 async function handleRegister(event) {
   event.preventDefault();
@@ -153,11 +180,11 @@ async function handleRegister(event) {
   const submitBtn = document.getElementById('regSubmitBtn');
 
   const name = document.getElementById('regName').value.trim();
-  const phone = document.getElementById('regPhone').value.trim();
+  const phone = normalizeClientPhone(document.getElementById('regPhone').value);
   const subject = document.getElementById('regSubject').value.trim();
   const center_name = document.getElementById('regCenter').value.trim();
-  const password = document.getElementById('regPassword').value;
-  const confirmPassword = document.getElementById('regConfirmPassword').value;
+  const password = document.getElementById('regPassword').value.trim();
+  const confirmPassword = document.getElementById('regConfirmPassword').value.trim();
 
   if (password !== confirmPassword) {
     showAuthError('كلمة السر وتأكيد كلمة السر غير متطابقين!');
@@ -196,8 +223,8 @@ async function handleRegister(event) {
 async function handleLogin(event) {
   event.preventDefault();
   const submitBtn = document.getElementById('loginSubmitBtn');
-  const phone = document.getElementById('loginPhone').value.trim();
-  const password = document.getElementById('loginPassword').value;
+  const phone = normalizeClientPhone(document.getElementById('loginPhone').value);
+  const password = document.getElementById('loginPassword').value.trim();
 
   submitBtn.disabled = true;
   submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري التحقق...';
@@ -229,9 +256,13 @@ async function handleLogin(event) {
 
 function showAuthError(msg) {
   const alertEl = document.getElementById('authAlert');
-  alertEl.className = 'mb-4 p-3 rounded-xl text-xs font-bold flex items-center gap-2 bg-rose-50 text-rose-700 border border-rose-200';
-  alertEl.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> <span>${msg}</span>`;
-  alertEl.classList.remove('hidden');
+  if (alertEl) {
+    alertEl.className = 'mb-4 p-3 rounded-xl text-xs font-bold flex items-center gap-2 bg-rose-50 text-rose-700 border border-rose-200';
+    alertEl.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> <span>${msg}</span>`;
+    alertEl.classList.remove('hidden');
+    alertEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  showToast(msg, 'error');
 }
 
 function confirmLogout() {
@@ -741,7 +772,7 @@ async function handleQuickCheckIn(event) {
 
   const codeInput = document.getElementById('quickBarcodeInput');
   const paidInput = document.getElementById('quickPaidAmount');
-  const code = codeInput ? codeInput.value.trim() : '';
+  const code = codeInput ? normalizeClientCode(codeInput.value) : '';
   const paid = paidInput && paidInput.value ? paidInput.value : undefined;
 
   if (!code) return;
@@ -1075,13 +1106,13 @@ async function saveStudentForm(event) {
   event.preventDefault();
   const id = document.getElementById('studentFormId').value;
   const payload = {
-    code: document.getElementById('studentFormCode').value.trim(),
+    code: normalizeClientCode(document.getElementById('studentFormCode').value),
     name: document.getElementById('studentFormName').value.trim(),
     grade: document.getElementById('studentFormGrade').value,
     group_id: document.getElementById('studentFormGroup').value || null,
-    phone: document.getElementById('studentFormPhone').value.trim(),
-    father_phone: document.getElementById('studentFormFatherPhone').value.trim(),
-    mother_phone: document.getElementById('studentFormMotherPhone').value.trim(),
+    phone: normalizeClientPhone(document.getElementById('studentFormPhone').value),
+    father_phone: normalizeClientPhone(document.getElementById('studentFormFatherPhone').value),
+    mother_phone: normalizeClientPhone(document.getElementById('studentFormMotherPhone').value),
     monthly_fee: document.getElementById('studentFormFee').value,
     balance: document.getElementById('studentFormBalance') ? document.getElementById('studentFormBalance').value : 0,
     notes: document.getElementById('studentFormNotes').value.trim()
@@ -1767,7 +1798,7 @@ function onQrCodeSuccess(decodedText) {
   toggleCameraScannerModal();
   const codeInput = document.getElementById('quickBarcodeInput');
   if (codeInput) {
-    codeInput.value = decodedText.trim();
+    codeInput.value = normalizeClientCode(decodedText);
     handleQuickCheckIn(new Event('submit'));
   }
 }

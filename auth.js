@@ -11,19 +11,52 @@ function generateToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+function normalizePhone(str) {
+  if (!str) return '';
+  let s = String(str).trim();
+  if (s.toLowerCase() === 'admin') return 'admin';
+  // Convert Eastern Arabic numerals (٠-٩) to Western digits (0-9)
+  s = s.replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+  // Remove spaces, hyphens, parentheses, dots
+  s = s.replace(/[\s\-\(\)\.]/g, '');
+  // Standardize Egyptian numbers (+20, 0020, 20)
+  if (s.startsWith('+20')) {
+    s = '0' + s.slice(3);
+  } else if (s.startsWith('0020')) {
+    s = '0' + s.slice(4);
+  } else if (s.startsWith('20') && s.length === 12 && ['10', '11', '12', '15'].includes(s.slice(2, 4))) {
+    s = '0' + s.slice(2);
+  } else if (s.startsWith('+')) {
+    s = s.slice(1);
+  }
+  s = s.replace(/\D/g, '');
+  return s;
+}
+
+function normalizeCode(str) {
+  if (!str) return '';
+  let s = String(str).trim();
+  s = s.replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+  s = s.replace(/[\s\r\n\t]/g, '');
+  return s;
+}
+
 // Register user
 function registerUser({ name, phone, password, confirmPassword, subject, center_name }) {
   if (!name || !name.trim()) {
     throw new Error('الاسم مطلوب بالكامل');
   }
-  const cleanPhone = String(phone || '').trim();
+  const cleanPhone = normalizePhone(phone);
   if (!cleanPhone || cleanPhone.length < 3) {
     throw new Error('برجاء إدخال رقم هاتف صحيح');
   }
-  if (!password || password.length < 4) {
-    throw new Error('كلمة السر يجب أن لا تقل عن 4 حروف أو أرقام');
+  const cleanPass = String(password || '').trim();
+  const cleanConfirm = String(confirmPassword || '').trim();
+
+  if (!cleanPass || cleanPass.length < 3) {
+    throw new Error('كلمة السر يجب أن لا تقل عن 3 حروف أو أرقام');
   }
-  if (password !== confirmPassword) {
+  if (cleanPass !== cleanConfirm) {
     throw new Error('كلمة السر وتأكيد كلمة السر غير متطابقين');
   }
 
@@ -34,7 +67,7 @@ function registerUser({ name, phone, password, confirmPassword, subject, center_
   }
 
   const salt = crypto.randomBytes(16).toString('hex');
-  const passwordHash = hashPassword(password, salt);
+  const passwordHash = hashPassword(cleanPass, salt);
 
   const stmt = db.prepare(`
     INSERT INTO users (name, phone, password_hash, salt, subject, center_name, role, status)
@@ -57,8 +90,10 @@ function registerUser({ name, phone, password, confirmPassword, subject, center_
 
 // Login user
 function loginUser({ phone, password }) {
-  const cleanPhone = String(phone || '').trim();
-  if (!cleanPhone || !password) {
+  const cleanPhone = normalizePhone(phone);
+  const cleanPass = String(password || '').trim();
+
+  if (!cleanPhone || !cleanPass) {
     throw new Error('برجاء كتابة رقم الهاتف وكلمة السر');
   }
 
@@ -72,7 +107,7 @@ function loginUser({ phone, password }) {
     throw new Error('تم إيقاف هذا الحساب من قِبل إدارة المنصة. برجاء التواصل مع الإدارة.');
   }
 
-  const hash = hashPassword(password, userRecord.salt);
+  const hash = hashPassword(cleanPass, userRecord.salt);
   if (hash !== userRecord.password_hash) {
     throw new Error('كلمة السر غير صحيحة، برجاء التأكد والمحاولة مرة أخرى');
   }
@@ -175,6 +210,8 @@ function requireAdmin(req, res, next) {
 }
 
 module.exports = {
+  normalizePhone,
+  normalizeCode,
   registerUser,
   loginUser,
   getUserFromToken,

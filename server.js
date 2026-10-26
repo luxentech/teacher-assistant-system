@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const multer = require('multer');
 const xlsx = require('xlsx');
 const { db } = require('./database');
-const { registerUser, loginUser, getUserFromToken, logoutUser, requireAuth, requireAdmin } = require('./auth');
+const { registerUser, loginUser, getUserFromToken, logoutUser, requireAuth, requireAdmin, normalizePhone, normalizeCode } = require('./auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -490,13 +490,14 @@ app.post('/api/students', requireAuth, (req, res) => {
       return res.status(400).json({ success: false, error: 'اسم الطالب والمرحلة الدراسية مطلوبان' });
     }
 
+    code = normalizeCode(code);
     if (!code) {
       const last = db.prepare('SELECT code FROM students WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(req.userId);
       code = last && !isNaN(parseInt(last.code, 10)) ? String(parseInt(last.code, 10) + 1) : '1001';
     }
 
     // Check code uniqueness for this teacher
-    const existing = db.prepare('SELECT id FROM students WHERE user_id = ? AND code = ?').get(req.userId, String(code).trim());
+    const existing = db.prepare('SELECT id FROM students WHERE user_id = ? AND code = ?').get(req.userId, code);
     if (existing) {
       return res.status(400).json({ success: false, error: 'كود الطالب مسجل مسبقاً، برجاء اختيار كود آخر' });
     }
@@ -506,19 +507,23 @@ app.post('/api/students', requireAuth, (req, res) => {
       if (grp) monthly_fee = grp.session_price;
     }
 
+    const cleanPhone = normalizePhone(phone);
+    const cleanFatherPhone = normalizePhone(father_phone);
+    const cleanMotherPhone = normalizePhone(mother_phone);
+
     const stmt = db.prepare(`
       INSERT INTO students (user_id, code, name, phone, grade, group_id, father_phone, mother_phone, monthly_fee, notes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       req.userId,
-      String(code).trim(),
+      code,
       name.trim(),
-      phone ? phone.trim() : '',
+      cleanPhone,
       grade.trim(),
       group_id ? Number(group_id) : null,
-      father_phone ? father_phone.trim() : '',
-      mother_phone ? mother_phone.trim() : '',
+      cleanFatherPhone,
+      cleanMotherPhone,
       Number(monthly_fee) || 0,
       notes || ''
     );
@@ -532,12 +537,17 @@ app.post('/api/students', requireAuth, (req, res) => {
 app.put('/api/students/:id', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
-    const { code, name, phone, grade, group_id, father_phone, mother_phone, monthly_fee, balance, notes, status } = req.body;
+    let { code, name, phone, grade, group_id, father_phone, mother_phone, monthly_fee, balance, notes, status } = req.body;
 
-    const existing = db.prepare('SELECT id FROM students WHERE user_id = ? AND code = ? AND id != ?').get(req.userId, String(code).trim(), id);
+    code = normalizeCode(code);
+    const existing = db.prepare('SELECT id FROM students WHERE user_id = ? AND code = ? AND id != ?').get(req.userId, code, id);
     if (existing) {
       return res.status(400).json({ success: false, error: 'هذا الكود مستخدم لطالب آخر لديك' });
     }
+
+    const cleanPhone = normalizePhone(phone);
+    const cleanFatherPhone = normalizePhone(father_phone);
+    const cleanMotherPhone = normalizePhone(mother_phone);
 
     const stmt = db.prepare(`
       UPDATE students 
@@ -546,13 +556,13 @@ app.put('/api/students/:id', requireAuth, (req, res) => {
       WHERE id = ? AND user_id = ?
     `);
     const info = stmt.run(
-      String(code).trim(),
+      code,
       name.trim(),
-      phone || '',
+      cleanPhone,
       grade.trim(),
       group_id ? Number(group_id) : null,
-      father_phone || '',
-      mother_phone || '',
+      cleanFatherPhone,
+      cleanMotherPhone,
       Number(monthly_fee) || 0,
       Number(balance) || 0,
       notes || '',
@@ -740,13 +750,14 @@ app.get('/api/sessions/:id', requireAuth, (req, res) => {
 app.post('/api/sessions/:id/checkin', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
-    const { code, paid_amount, status } = req.body;
+    let { code, paid_amount, status } = req.body;
 
     if (!code) {
       return res.status(400).json({ success: false, error: 'كود الطالب مطلوب' });
     }
 
-    const student = db.prepare('SELECT * FROM students WHERE (code = ? OR id = ?) AND user_id = ?').get(String(code).trim(), code, req.userId);
+    const cleanCode = normalizeCode(code);
+    const student = db.prepare('SELECT * FROM students WHERE (code = ? OR id = ?) AND user_id = ?').get(cleanCode, cleanCode, req.userId);
     if (!student) {
       return res.status(404).json({ success: false, error: 'كود الطالب غير صحيح أو غير مسجل لديك' });
     }
