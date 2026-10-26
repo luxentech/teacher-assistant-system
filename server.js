@@ -15,8 +15,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Uploads directory
-const uploadsDir = path.join(__dirname, 'uploads');
+// Uploads directory (use /tmp on Vercel)
+const uploadsDir = process.env.VERCEL ? path.join(require('node:os').tmpdir(), 'uploads') : path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -1151,16 +1151,20 @@ function getLocalIpAddresses() {
   return ips;
 }
 
-app.listen(PORT, '0.0.0.0', () => {
-  const localIps = getLocalIpAddresses();
-  console.log(`=======================================================`);
-  console.log(`🚀 نظام المساعد الذكي للمدرسين (موقع ويب كامل) يعمل الآن بنجاح!`);
-  console.log(`💻 افتح من الكمبيوتر:   http://localhost:${PORT}`);
-  if (localIps.length > 0) {
-    localIps.forEach(ip => {
-      console.log(`📱 افتح من الموبايل:    http://${ip}:${PORT}`);
-    });
-    console.log(`(تأكد أن الموبايل متصل بنفس شبكة الواي فاي للكمبيوتر)`);
-  }
-  console.log(`=======================================================`);
-});
+module.exports = app;
+
+if (!process.env.VERCEL) {
+  app.listen(PORT, '0.0.0.0', () => {
+    const localIps = getLocalIpAddresses();
+    console.log(`=======================================================`);
+    console.log(`🚀 نظام المساعد الذكي للمدرسين (موقع ويب كامل) يعمل الآن بنجاح!`);
+    console.log(`💻 افتح من الكمبيوتر:   http://localhost:${PORT}`);
+    if (localIps.length > 0) {
+      localIps.forEach(ip => {
+        console.log(`📱 افتح من الموبايل:    http://${ip}:${PORT}`);
+      });
+      console.log(`(تأكد أن الموبايل متصل بنفس شبكة الواي فاي للكمبيوتر)`);
+    }
+    console.log(`=======================================================`);
+  });
+}

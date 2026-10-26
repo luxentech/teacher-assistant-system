@@ -1,8 +1,11 @@
 {
   "name": "teacher-assistant-system",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "نظام المساعد الذكي للمدرسين - إدارة الحضور والغياب والفلوس والطلاب وكروت الباركود",
   "main": "server.js",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "node server.js"
   },

@@ -1,7 +1,10 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('node:path');
+const os = require('node:os');
 
-const dbPath = path.join(__dirname, 'teacher_system.db');
+// On Vercel (serverless environment), the root folder is read-only, so write to os.tmpdir()
+const dbDir = process.env.VERCEL ? os.tmpdir() : __dirname;
+const dbPath = path.join(dbDir, 'teacher_system.db');
 const db = new DatabaseSync(dbPath);
 
 // Enable WAL mode and foreign keys for high performance and relational integrity
