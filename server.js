@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const multer = require('multer');
 const xlsx = require('xlsx');
 const { db } = require('./database');
-const { registerUser, loginUser, getUserFromToken, logoutUser, requireAuth } = require('./auth');
+const { registerUser, loginUser, getUserFromToken, logoutUser, requireAuth, requireAdmin } = require('./auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -115,6 +115,194 @@ app.post('/api/settings', requireAuth, (req, res) => {
       updateStmt.run(req.userId, key, String(value));
     }
     res.json({ success: true, message: 'تم حفظ الإعدادات بنجاح' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// ADMIN DASHBOARD & CONTROL PANEL APIs
+// ==========================================
+app.get('/api/admin/overview', requireAdmin, (req, res) => {
+  try {
+    const totalTeachers = db.prepare("SELECT COUNT(*) as count FROM users WHERE role != 'admin'").get().count;
+    const activeTeachers = db.prepare("SELECT COUNT(*) as count FROM users WHERE role != 'admin' AND (status = 'active' OR status IS NULL)").get().count;
+    const blockedTeachers = db.prepare("SELECT COUNT(*) as count FROM users WHERE role != 'admin' AND status = 'blocked'").get().count;
+    const totalStudents = db.prepare("SELECT COUNT(*) as count FROM students").get().count;
+    const totalSessions = db.prepare("SELECT COUNT(*) as count FROM sessions").get().count;
+    
+    const attendanceIncome = db.prepare("SELECT SUM(paid_amount) as total FROM attendance").get().total || 0;
+    const handoutsIncome = db.prepare("SELECT SUM(paid_amount) as total FROM student_handouts").get().total || 0;
+    const paymentsIncome = db.prepare("SELECT SUM(amount) as total FROM payments").get().total || 0;
+    const totalPlatformVolume = attendanceIncome + handoutsIncome + paymentsIncome;
+    
+    // Commission rate: 10% platform profit
+    const commissionRate = 10;
+    const platformProfit = Math.round(totalPlatformVolume * (commissionRate / 100));
+
+    res.json({
+      success: true,
+      data: {
+        totalTeachers,
+        activeTeachers,
+        blockedTeachers,
+        totalStudents,
+        totalSessions,
+        totalPlatformVolume,
+        commissionRate,
+        platformProfit
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/admin/teachers', requireAdmin, (req, res) => {
+  try {
+    const teachers = db.prepare(`
+      SELECT u.id, u.name, u.phone, u.subject, u.center_name, u.role, u.status, u.created_at,
+        (SELECT COUNT(*) FROM students WHERE user_id = u.id) as students_count,
+        (SELECT COUNT(*) FROM groups WHERE user_id = u.id) as groups_count,
+        (SELECT IFNULL(SUM(paid_amount), 0) FROM attendance WHERE user_id = u.id) as total_collected
+      FROM users u
+      WHERE u.role != 'admin'
+      ORDER BY u.created_at DESC
+    `).all();
+    res.json({ success: true, data: teachers });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.put('/api/admin/teachers/:id/toggle-status', requireAdmin, (req, res) => {
+  try {
+    const { id } = req.params;
+    const teacher = db.prepare("SELECT * FROM users WHERE id = ? AND role != 'admin'").get(id);
+    if (!teacher) {
+      return res.status(404).json({ success: false, error: 'المدرس غير موجود' });
+    }
+    const newStatus = teacher.status === 'blocked' ? 'active' : 'blocked';
+    db.prepare("UPDATE users SET status = ? WHERE id = ?").run(newStatus, id);
+
+    // If blocked, immediately delete all active login tokens for this teacher
+    if (newStatus === 'blocked') {
+      db.prepare("DELETE FROM user_tokens WHERE user_id = ?").run(id);
+    }
+
+    res.json({
+      success: true,
+      message: newStatus === 'blocked' ? `تم إيقاف حساب المدرس (${teacher.name}) بنجاح` : `تم تفعيل حساب المدرس (${teacher.name}) بنجاح`,
+      status: newStatus
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/admin/teachers/:id', requireAdmin, (req, res) => {
+  try {
+    const { id } = req.params;
+    db.prepare("DELETE FROM users WHERE id = ? AND role != 'admin'").run(id);
+    res.json({ success: true, message: 'تم حذف حساب المدرس بالكامل بنجاح' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// CHAT APIs (الشات المباشر بين الأدمن والمدرس)
+// ==========================================
+app.get('/api/chat/messages', requireAuth, (req, res) => {
+  try {
+    let otherUserId;
+    if (req.user.role === 'admin') {
+      otherUserId = req.query.teacher_id;
+      if (!otherUserId) {
+        return res.status(400).json({ success: false, error: 'برجاء تحديد المدرس' });
+      }
+    } else {
+      const admin = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get();
+      if (!admin) {
+        return res.status(404).json({ success: false, error: 'حساب الإدارة غير متوفر حالياً' });
+      }
+      otherUserId = admin.id;
+    }
+
+    const messages = db.prepare(`
+      SELECT m.*, u.name as sender_name, u.role as sender_role
+      FROM messages m
+      JOIN users u ON m.sender_id = u.id
+      WHERE (m.sender_id = ? AND m.receiver_id = ?)
+         OR (m.sender_id = ? AND m.receiver_id = ?)
+      ORDER BY m.created_at ASC
+    `).all(req.userId, otherUserId, otherUserId, req.userId);
+
+    // Mark as read
+    db.prepare("UPDATE messages SET is_read = 1 WHERE receiver_id = ? AND sender_id = ? AND is_read = 0")
+      .run(req.userId, otherUserId);
+
+    res.json({ success: true, data: messages });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/chat/messages', requireAuth, (req, res) => {
+  try {
+    const { message, receiver_id } = req.body;
+    if (!message || !message.trim()) {
+      return res.status(400).json({ success: false, error: 'نص الرسالة مطلوب' });
+    }
+
+    let targetReceiverId = receiver_id;
+    if (req.user.role !== 'admin') {
+      const admin = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get();
+      if (!admin) return res.status(404).json({ success: false, error: 'حساب الإدارة غير موجود' });
+      targetReceiverId = admin.id;
+    } else {
+      if (!targetReceiverId) {
+        return res.status(400).json({ success: false, error: 'برجاء اختيار المدرس المستلم' });
+      }
+    }
+
+    const stmt = db.prepare("INSERT INTO messages (sender_id, receiver_id, message) VALUES (?, ?, ?)");
+    const result = stmt.run(req.userId, targetReceiverId, message.trim());
+    const inserted = db.prepare(`
+      SELECT m.*, u.name as sender_name, u.role as sender_role
+      FROM messages m
+      JOIN users u ON m.sender_id = u.id
+      WHERE m.id = ?
+    `).get(result.lastInsertRowid);
+
+    res.json({ success: true, data: inserted });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/chat/conversations', requireAdmin, (req, res) => {
+  try {
+    const teachers = db.prepare(`
+      SELECT u.id, u.name, u.phone, u.subject, u.status,
+        (SELECT message FROM messages WHERE (sender_id = u.id AND receiver_id = ?) OR (sender_id = ? AND receiver_id = u.id) ORDER BY created_at DESC LIMIT 1) as last_message,
+        (SELECT created_at FROM messages WHERE (sender_id = u.id AND receiver_id = ?) OR (sender_id = ? AND receiver_id = u.id) ORDER BY created_at DESC LIMIT 1) as last_message_date,
+        (SELECT COUNT(*) FROM messages WHERE sender_id = u.id AND receiver_id = ? AND is_read = 0) as unread_count
+      FROM users u
+      WHERE u.role != 'admin'
+      ORDER BY unread_count DESC, last_message_date DESC, u.name ASC
+    `).all(req.userId, req.userId, req.userId, req.userId);
+
+    res.json({ success: true, data: teachers });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/chat/unread-count', requireAuth, (req, res) => {
+  try {
+    const count = db.prepare("SELECT COUNT(*) as c FROM messages WHERE receiver_id = ? AND is_read = 0").get(req.userId).c || 0;
+    res.json({ success: true, unread_count: count });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

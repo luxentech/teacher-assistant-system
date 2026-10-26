@@ -934,6 +934,45 @@
 
       </section>
 
+    
+      <!-- ======================================================== -->
+      <!-- TAB 9: CHAT (محادثة الإدارة والدعم الفني المباشر) -->
+      <!-- ======================================================== -->
+      <section id="tab-chat" class="space-y-4 hidden">
+        <div class="bg-white rounded-3xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col h-[75vh]">
+          <div class="p-4 border-b border-slate-100 bg-slate-50/60 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center text-lg shadow-md shadow-indigo-600/20">
+                <i class="fa-solid fa-headset"></i>
+              </div>
+              <div>
+                <h3 class="text-sm font-extrabold text-slate-800">إدارة الموقع والدعم الفني</h3>
+                <p class="text-[11px] text-emerald-600 font-bold flex items-center gap-1.5 mt-0.5">
+                  <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>متصل للرد على استفساراتك وطلباتك</span>
+                </p>
+              </div>
+            </div>
+            <button onclick="loadTeacherMessages()" class="w-8 h-8 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 flex items-center justify-center transition" title="تحديث الرسائل">
+              <i class="fa-solid fa-rotate text-xs"></i>
+            </button>
+          </div>
+          <div id="teacherChatMessagesList" class="flex-1 p-4 overflow-y-auto space-y-3 bg-slate-50/30">
+            <div class="h-full flex items-center justify-center text-slate-400 text-xs">
+              <i class="fa-solid fa-comments ml-1"></i>
+              <span>لا توجد رسائل سابقة. يمكنك إرسال أي استفسار أو طلب للإدارة وسيتم الرد عليك فوراً.</span>
+            </div>
+          </div>
+          <form id="teacherChatForm" onsubmit="sendTeacherMessage(event)" class="p-3 border-t border-slate-100 bg-white flex items-center gap-2">
+            <input type="text" id="teacherMessageInput" placeholder="اكتب رسالتك للإدارة هنا واضغط Enter..." autocomplete="off" class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs sm:text-sm font-medium focus:bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none">
+            <button type="submit" class="bg-brand-600 hover:bg-brand-500 text-white px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-brand-600/20 transition active:scale-95 flex items-center gap-1.5">
+              <span>إرسال</span>
+              <i class="fa-solid fa-paper-plane text-xs"></i>
+            </button>
+          </form>
+        </div>
+      </section>
+
     </main>
 
     <!-- Mobile Bottom Navigation Bar (Very clean on phones) -->

@@ -78,16 +78,40 @@ async function checkAuthStatus() {
 function showAuthScreen() {
   document.getElementById('authScreen').classList.remove('hidden');
   document.getElementById('appScreen').classList.add('hidden');
+  const adminScreen = document.getElementById('adminScreen');
+  if (adminScreen) adminScreen.classList.add('hidden');
 }
+
+let adminPollingInterval = null;
+let teacherPollingInterval = null;
 
 function showAppScreen() {
   document.getElementById('authScreen').classList.add('hidden');
-  document.getElementById('appScreen').classList.remove('hidden');
 
-  updateHeaderProfile();
-  loadSettings();
-  loadGroups();
-  loadStudentsList();
+  if (currentUser && currentUser.role === 'admin') {
+    document.getElementById('appScreen').classList.add('hidden');
+    const adminScreen = document.getElementById('adminScreen');
+    if (adminScreen) adminScreen.classList.remove('hidden');
+
+    loadAdminDashboard();
+    loadAdminTeachers();
+    loadAdminConversations();
+    if (!adminPollingInterval) {
+      adminPollingInterval = setInterval(checkAdminChatBadge, 6000);
+    }
+  } else {
+    const adminScreen = document.getElementById('adminScreen');
+    if (adminScreen) adminScreen.classList.add('hidden');
+    document.getElementById('appScreen').classList.remove('hidden');
+
+    updateHeaderProfile();
+    loadSettings();
+    loadGroups();
+    loadStudentsList();
+    if (!teacherPollingInterval) {
+      teacherPollingInterval = setInterval(checkTeacherChatBadge, 6000);
+    }
+  }
 }
 
 function switchAuthMode(mode) {
@@ -256,7 +280,7 @@ function setDefaultSessionDate() {
 }
 
 function switchTab(tabId) {
-  const tabs = ['attendance', 'students', 'groups', 'idcards', 'handouts', 'finance', 'leaderboard', 'settings'];
+  const tabs = ['attendance', 'students', 'groups', 'idcards', 'handouts', 'finance', 'leaderboard', 'settings', 'chat'];
   tabs.forEach(t => {
     const sec = document.getElementById(`tab-${t}`);
     const btn = document.getElementById(`tabBtn-${t}`);
@@ -284,6 +308,9 @@ function switchTab(tabId) {
   if (tabId === 'handouts') loadHandouts();
   if (tabId === 'finance') loadFinanceDashboard();
   if (tabId === 'leaderboard') loadLeaderboard();
+  if (tabId === 'chat') {
+    loadTeacherMessages();
+  }
   if (tabId === 'attendance') {
     setTimeout(() => {
       const input = document.getElementById('quickBarcodeInput');
@@ -1796,4 +1823,343 @@ function stopCameraScanner() {
     } catch (e) {}
     html5QrScanner = null;
   }
+}
+
+
+// ==========================================
+// 16. ADMIN DASHBOARD & CHAT CENTER LOGIC
+// ==========================================
+let allAdminTeachers = [];
+let selectedChatTeacherId = null;
+
+function switchAdminSection(secId) {
+  ['overview', 'teachers', 'chat'].forEach(s => {
+    const sec = document.getElementById(`adminSec-${s}`);
+    const btn = document.getElementById(`adminSecBtn-${s}`);
+    if (sec) {
+      if (s === secId) sec.classList.remove('hidden');
+      else sec.classList.add('hidden');
+    }
+    if (btn) {
+      if (s === secId) {
+        btn.classList.add('bg-white/10', 'text-white');
+        btn.classList.remove('text-slate-300');
+      } else {
+        btn.classList.remove('bg-white/10', 'text-white');
+        btn.classList.add('text-slate-300');
+      }
+    }
+  });
+
+  if (secId === 'overview') loadAdminDashboard();
+  if (secId === 'teachers') loadAdminTeachers();
+  if (secId === 'chat') loadAdminConversations();
+}
+
+async function loadAdminDashboard() {
+  try {
+    const res = await apiFetch('/api/admin/overview');
+    if (res.success && res.data) {
+      const d = res.data;
+      if (document.getElementById('adminStatTeachers')) document.getElementById('adminStatTeachers').innerText = d.totalTeachers;
+      if (document.getElementById('adminStatActiveTeachers')) document.getElementById('adminStatActiveTeachers').innerText = d.activeTeachers;
+      if (document.getElementById('adminStatBlockedTeachers')) document.getElementById('adminStatBlockedTeachers').innerText = d.blockedTeachers;
+      if (document.getElementById('adminStatStudents')) document.getElementById('adminStatStudents').innerText = d.totalStudents;
+      if (document.getElementById('adminStatTotalVolume')) document.getElementById('adminStatTotalVolume').innerText = `${d.totalPlatformVolume} ج.م`;
+      if (document.getElementById('adminStatProfit')) document.getElementById('adminStatProfit').innerText = `${d.platformProfit} ج.م`;
+    }
+  } catch (err) {
+    console.error('Error loading admin overview:', err);
+  }
+}
+
+async function loadAdminTeachers() {
+  try {
+    const res = await apiFetch('/api/admin/teachers');
+    if (res.success) {
+      allAdminTeachers = res.data || [];
+      renderAdminTeachersTable(allAdminTeachers);
+    }
+  } catch (err) {
+    console.error('Error loading teachers:', err);
+  }
+}
+
+function renderAdminTeachersTable(teachers) {
+  const tbody = document.getElementById('adminTeachersTableBody');
+  if (!tbody) return;
+
+  if (teachers.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center py-10 text-slate-400">لا يوجد مدرسين مسجلين بعد في الموقع</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = teachers.map(t => {
+    const isBlocked = t.status === 'blocked';
+    const statusBadge = isBlocked
+      ? '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-black bg-rose-100 text-rose-800">موقوف</span>'
+      : '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800">نشط</span>';
+
+    return `
+      <tr class="hover:bg-slate-50 transition border-b border-slate-100 ${isBlocked ? 'bg-rose-50/20' : ''}">
+        <td class="px-4 py-3.5">
+          <div class="font-extrabold text-slate-800">${t.name}</div>
+          <span class="text-[10px] text-slate-400">انضم: ${t.created_at ? t.created_at.split(' ')[0] : '--'}</span>
+        </td>
+        <td class="px-4 py-3.5 font-mono text-xs font-bold text-slate-700" dir="ltr">${t.phone}</td>
+        <td class="px-4 py-3.5 text-xs text-slate-600">${t.subject || 'عام'} ${t.center_name ? ' | ' + t.center_name : ''}</td>
+        <td class="px-4 py-3.5 text-center font-bold text-xs text-slate-700">${t.groups_count || 0}</td>
+        <td class="px-4 py-3.5 text-center font-bold text-xs text-brand-600">${t.students_count || 0}</td>
+        <td class="px-4 py-3.5 text-center font-black text-xs text-indigo-700">${t.total_collected || 0} ج.م</td>
+        <td class="px-4 py-3.5 text-center">${statusBadge}</td>
+        <td class="px-4 py-3.5 text-center">
+          <div class="inline-flex items-center gap-1.5">
+            <button onclick="toggleTeacherStatus(${t.id})" class="px-3 py-1.5 rounded-xl text-xs font-bold transition ${isBlocked ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'bg-rose-50 text-rose-700 hover:bg-rose-100'}">
+              <i class="fa-solid ${isBlocked ? 'fa-play' : 'fa-ban'} ml-1"></i>
+              <span>${isBlocked ? 'تفعيل الحساب' : 'إيقاف الحساب'}</span>
+            </button>
+            <button onclick="openChatWithTeacher(${t.id}, '${t.name}', '${t.subject || ''}')" class="px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition flex items-center gap-1">
+              <i class="fa-solid fa-comments"></i>
+              <span>شات</span>
+            </button>
+            <button onclick="deleteTeacher(${t.id})" class="w-8 h-8 rounded-xl bg-slate-100 hover:bg-rose-100 hover:text-rose-700 text-slate-400 flex items-center justify-center transition" title="حذف الحساب نهائياً">
+              <i class="fa-solid fa-trash text-xs"></i>
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function filterAdminTeachers() {
+  const query = (document.getElementById('adminTeacherSearchInput').value || '').toLowerCase().trim();
+  const filtered = allAdminTeachers.filter(t => {
+    return t.name.toLowerCase().includes(query) || (t.phone && t.phone.includes(query)) || (t.subject && t.subject.toLowerCase().includes(query));
+  });
+  renderAdminTeachersTable(filtered);
+}
+
+async function toggleTeacherStatus(teacherId) {
+  try {
+    const res = await apiFetch(`/api/admin/teachers/${teacherId}/toggle-status`, { method: 'PUT' });
+    if (res.success) {
+      showToast(res.message, 'success');
+      await loadAdminTeachers();
+      await loadAdminDashboard();
+    } else {
+      showToast(res.error || 'فشل تعديل حالة الحساب', 'error');
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function deleteTeacher(teacherId) {
+  if (!confirm('تحذير: هل أنت متأكد من حذف حساب هذا المدرس نهائياً مع كافة طلابه ومجموعاته؟ لا يمكن التراجع عن هذا الإجراء.')) return;
+  try {
+    const res = await apiFetch(`/api/admin/teachers/${teacherId}`, { method: 'DELETE' });
+    if (res.success) {
+      showToast(res.message, 'success');
+      await loadAdminTeachers();
+      await loadAdminDashboard();
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// Admin Chat Center
+async function loadAdminConversations() {
+  try {
+    const res = await apiFetch('/api/chat/conversations');
+    const container = document.getElementById('adminConversationsList');
+    if (!container) return;
+
+    if (!res.success || !res.data || res.data.length === 0) {
+      container.innerHTML = '<div class="p-6 text-center text-slate-400 text-xs">لا يوجد مدرسين لبدء المحادثة</div>';
+      return;
+    }
+
+    container.innerHTML = res.data.map(t => {
+      const isSelected = selectedChatTeacherId === t.id;
+      return `
+        <div onclick="openChatWithTeacher(${t.id}, '${t.name}', '${t.subject || ''}')" class="p-3.5 cursor-pointer hover:bg-slate-100 transition ${isSelected ? 'bg-indigo-50/80 border-r-4 border-indigo-600' : ''}">
+          <div class="flex items-center justify-between">
+            <h5 class="text-xs font-black text-slate-800 truncate">${t.name}</h5>
+            ${t.unread_count > 0 ? `<span class="px-1.5 py-0.2 bg-rose-500 text-white rounded-full text-[10px] font-bold">${t.unread_count}</span>` : ''}
+          </div>
+          <p class="text-[11px] text-slate-500 truncate mt-0.5">${t.last_message || 'اضغط لبدء الشات...'}</p>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Error loading conversations:', err);
+  }
+}
+
+async function openChatWithTeacher(teacherId, teacherName, teacherSubject) {
+  selectedChatTeacherId = teacherId;
+  switchAdminSection('chat');
+
+  document.getElementById('adminChatTeacherName').innerText = teacherName;
+  document.getElementById('adminChatTeacherSub').innerText = `مادة: ${teacherSubject || 'عام'} | شات مباشر`;
+  document.getElementById('adminMessageInput').disabled = false;
+  document.getElementById('adminMessageSendBtn').disabled = false;
+  document.getElementById('adminMessageInput').focus();
+
+  await loadAdminChatMessages(teacherId);
+  loadAdminConversations();
+}
+
+async function loadAdminChatMessages(teacherId) {
+  if (!teacherId) return;
+  try {
+    const res = await apiFetch(`/api/chat/messages?teacher_id=${teacherId}`);
+    const container = document.getElementById('adminChatMessagesList');
+    if (!container) return;
+
+    if (!res.success || !res.data || res.data.length === 0) {
+      container.innerHTML = '<div class="h-full flex items-center justify-center text-slate-400 text-xs">لا توجد رسائل سابقة مع هذا المدرس. اكتب رسالتك بالأسفل للتواصل معه.</div>';
+      return;
+    }
+
+    container.innerHTML = res.data.map(m => {
+      const isAdmin = m.sender_role === 'admin';
+      return `
+        <div class="flex ${isAdmin ? 'justify-start' : 'justify-end'}">
+          <div class="max-w-md rounded-2xl px-4 py-2.5 shadow-sm text-xs ${isAdmin ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-white border border-slate-200 text-slate-800 rounded-bl-none'}">
+            <p class="text-[10px] ${isAdmin ? 'text-indigo-200' : 'text-slate-400'} font-bold mb-0.5">${m.sender_name}</p>
+            <p class="font-medium leading-relaxed">${m.message}</p>
+            <span class="text-[9px] block text-left mt-1 ${isAdmin ? 'text-indigo-300' : 'text-slate-400'} font-mono">${m.created_at ? m.created_at.split(' ')[1] : ''}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.scrollTop = container.scrollHeight;
+  } catch (err) {
+    console.error('Error loading chat messages:', err);
+  }
+}
+
+async function sendAdminMessage(event) {
+  event.preventDefault();
+  if (!selectedChatTeacherId) return;
+
+  const input = document.getElementById('adminMessageInput');
+  const message = input.value.trim();
+  if (!message) return;
+
+  try {
+    const res = await apiFetch('/api/chat/messages', {
+      method: 'POST',
+      body: JSON.stringify({ message, receiver_id: selectedChatTeacherId })
+    });
+
+    if (res.success) {
+      input.value = '';
+      await loadAdminChatMessages(selectedChatTeacherId);
+      loadAdminConversations();
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function refreshAdminCurrentChat() {
+  if (selectedChatTeacherId) {
+    loadAdminChatMessages(selectedChatTeacherId);
+    loadAdminConversations();
+    showToast('تم تحديث المحادثة', 'info');
+  }
+}
+
+async function checkAdminChatBadge() {
+  try {
+    const res = await apiFetch('/api/chat/unread-count');
+    const badge = document.getElementById('adminChatTotalBadge');
+    if (badge && res.success) {
+      if (res.unread_count > 0) {
+        badge.innerText = res.unread_count;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+    if (selectedChatTeacherId && !document.getElementById('adminSec-chat').classList.contains('hidden')) {
+      loadAdminChatMessages(selectedChatTeacherId);
+    }
+  } catch (e) {}
+}
+
+// Teacher Side Chat Logic
+async function loadTeacherMessages() {
+  try {
+    const res = await apiFetch('/api/chat/messages');
+    const container = document.getElementById('teacherChatMessagesList');
+    if (!container) return;
+
+    if (!res.success || !res.data || res.data.length === 0) {
+      container.innerHTML = '<div class="h-full flex items-center justify-center text-slate-400 text-xs">لا توجد رسائل سابقة. يمكنك إرسال أي استفسار أو طلب للإدارة وسيتم الرد عليك فوراً.</div>';
+      return;
+    }
+
+    container.innerHTML = res.data.map(m => {
+      const isTeacher = m.sender_role !== 'admin';
+      return `
+        <div class="flex ${isTeacher ? 'justify-start' : 'justify-end'}">
+          <div class="max-w-md rounded-2xl px-4 py-2.5 shadow-sm text-xs ${isTeacher ? 'bg-brand-600 text-white rounded-br-none' : 'bg-white border border-slate-200 text-slate-800 rounded-bl-none'}">
+            <p class="text-[10px] ${isTeacher ? 'text-emerald-200' : 'text-indigo-600'} font-bold mb-0.5">${m.sender_name}</p>
+            <p class="font-medium leading-relaxed">${m.message}</p>
+            <span class="text-[9px] block text-left mt-1 ${isTeacher ? 'text-emerald-200' : 'text-slate-400'} font-mono">${m.created_at ? m.created_at.split(' ')[1] : ''}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.scrollTop = container.scrollHeight;
+  } catch (err) {
+    console.error('Error loading teacher messages:', err);
+  }
+}
+
+async function sendTeacherMessage(event) {
+  event.preventDefault();
+  const input = document.getElementById('teacherMessageInput');
+  const message = input.value.trim();
+  if (!message) return;
+
+  try {
+    const res = await apiFetch('/api/chat/messages', {
+      method: 'POST',
+      body: JSON.stringify({ message })
+    });
+
+    if (res.success) {
+      input.value = '';
+      await loadTeacherMessages();
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function checkTeacherChatBadge() {
+  try {
+    const res = await apiFetch('/api/chat/unread-count');
+    const badge = document.getElementById('teacherChatBadge');
+    if (badge && res.success) {
+      if (res.unread_count > 0) {
+        badge.innerText = res.unread_count;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+    const chatTab = document.getElementById('tab-chat');
+    if (chatTab && !chatTab.classList.contains('hidden')) {
+      loadTeacherMessages();
+    }
+  } catch (e) {}
 }

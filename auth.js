@@ -17,7 +17,7 @@ function registerUser({ name, phone, password, confirmPassword, subject, center_
     throw new Error('الاسم مطلوب بالكامل');
   }
   const cleanPhone = String(phone || '').trim();
-  if (!cleanPhone || cleanPhone.length < 6) {
+  if (!cleanPhone || cleanPhone.length < 3) {
     throw new Error('برجاء إدخال رقم هاتف صحيح');
   }
   if (!password || password.length < 4) {
@@ -37,8 +37,8 @@ function registerUser({ name, phone, password, confirmPassword, subject, center_
   const passwordHash = hashPassword(password, salt);
 
   const stmt = db.prepare(`
-    INSERT INTO users (name, phone, password_hash, salt, subject, center_name)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO users (name, phone, password_hash, salt, subject, center_name, role, status)
+    VALUES (?, ?, ?, ?, ?, ?, 'teacher', 'active')
   `);
   const result = stmt.run(name.trim(), cleanPhone, passwordHash, salt, (subject || '').trim(), (center_name || '').trim());
   const userId = Number(result.lastInsertRowid);
@@ -48,10 +48,10 @@ function registerUser({ name, phone, password, confirmPassword, subject, center_
 
   // Generate auth token
   const token = generateToken();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days
+  const expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(); // 60 days
   db.prepare('INSERT INTO user_tokens (token, user_id, expires_at) VALUES (?, ?, ?)').run(token, userId, expiresAt);
 
-  const user = db.prepare('SELECT id, name, phone, subject, center_name, created_at FROM users WHERE id = ?').get(userId);
+  const user = db.prepare('SELECT id, name, phone, subject, center_name, role, status, created_at FROM users WHERE id = ?').get(userId);
   return { user, token };
 }
 
@@ -64,7 +64,12 @@ function loginUser({ phone, password }) {
 
   const userRecord = db.prepare('SELECT * FROM users WHERE phone = ?').get(cleanPhone);
   if (!userRecord) {
-    throw new Error('رقم الهاتف غير مسجل بالنظام، برجاء إنشاء حساب جديد أولاً');
+    throw new Error('رقم الهاتف غير مسجل بالنظام، برجاء التأكد أو إنشاء حساب جديد');
+  }
+
+  // Check if account is suspended / blocked
+  if (userRecord.status === 'blocked') {
+    throw new Error('تم إيقاف هذا الحساب من قِبل إدارة المنصة. برجاء التواصل مع الإدارة.');
   }
 
   const hash = hashPassword(password, userRecord.salt);
@@ -73,7 +78,7 @@ function loginUser({ phone, password }) {
   }
 
   const token = generateToken();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
   db.prepare('INSERT INTO user_tokens (token, user_id, expires_at) VALUES (?, ?, ?)').run(token, userRecord.id, expiresAt);
 
   const user = {
@@ -82,6 +87,8 @@ function loginUser({ phone, password }) {
     phone: userRecord.phone,
     subject: userRecord.subject,
     center_name: userRecord.center_name,
+    role: userRecord.role || 'teacher',
+    status: userRecord.status || 'active',
     created_at: userRecord.created_at
   };
 
@@ -92,7 +99,7 @@ function loginUser({ phone, password }) {
 function getUserFromToken(token) {
   if (!token) return null;
   const tokenRecord = db.prepare(`
-    SELECT ut.user_id, u.id, u.name, u.phone, u.subject, u.center_name, u.created_at
+    SELECT ut.user_id, u.id, u.name, u.phone, u.subject, u.center_name, u.role, u.status, u.created_at
     FROM user_tokens ut
     JOIN users u ON ut.user_id = u.id
     WHERE ut.token = ?
@@ -106,6 +113,8 @@ function getUserFromToken(token) {
     phone: tokenRecord.phone,
     subject: tokenRecord.subject,
     center_name: tokenRecord.center_name,
+    role: tokenRecord.role || 'teacher',
+    status: tokenRecord.status || 'active',
     created_at: tokenRecord.created_at
   };
 }
@@ -144,10 +153,25 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ success: false, error: 'جلسة تسجيل الدخول منتهية أو غير صالحة، برجاء إعادة تسجيل الدخول' });
   }
 
+  if (user.status === 'blocked') {
+    return res.status(403).json({ success: false, error: 'تم إيقاف هذا الحساب من قِبل الإدارة' });
+  }
+
   req.user = user;
   req.userId = user.id;
   req.token = token;
   next();
+}
+
+// Express Middleware for Admin-only APIs
+function requireAdmin(req, res, next) {
+  requireAuth(req, res, () => {
+    if (req.user && req.user.role === 'admin') {
+      next();
+    } else {
+      return res.status(403).json({ success: false, error: 'غير مصرح: هذه الصلاحية مخصصة لمدير الموقع (الأدمن) فقط' });
+    }
+  });
 }
 
 module.exports = {
@@ -155,5 +179,6 @@ module.exports = {
   loginUser,
   getUserFromToken,
   logoutUser,
-  requireAuth
+  requireAuth,
+  requireAdmin
 };

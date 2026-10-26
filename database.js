@@ -1,8 +1,9 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
 
-// On Vercel (serverless environment), the root folder is read-only, so write to os.tmpdir()
+// Database path (on Vercel serverless use tmpdir, locally use project directory)
 const dbDir = process.env.VERCEL ? os.tmpdir() : __dirname;
 const dbPath = path.join(dbDir, 'teacher_system.db');
 const db = new DatabaseSync(dbPath);
@@ -12,7 +13,7 @@ db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
 
-  -- Users Table (المدرسين والمستخدمين)
+  -- Users Table (المدرسين والمستخدمين والأدمن)
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -21,6 +22,8 @@ db.exec(`
     salt TEXT NOT NULL,
     subject TEXT DEFAULT '',
     center_name TEXT DEFAULT '',
+    role TEXT DEFAULT 'teacher', -- 'admin' or 'teacher'
+    status TEXT DEFAULT 'active', -- 'active' or 'blocked'
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -133,13 +136,13 @@ db.exec(`
     FOREIGN KEY(handout_id) REFERENCES handouts(id) ON DELETE CASCADE
   );
 
-  -- Payments & Transactions Table (سجل الدفعات وسداد الديون)
+  -- Payments Table (سجل الدفعات وسداد الديون)
   CREATE TABLE IF NOT EXISTS payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     student_id INTEGER NOT NULL,
     amount REAL NOT NULL,
-    payment_type TEXT DEFAULT 'سداد دين', -- 'سداد دين', 'حصة', 'مذكرة', 'اشتراك شهري'
+    payment_type TEXT DEFAULT 'سداد دين',
     notes TEXT,
     date TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -169,14 +172,47 @@ db.exec(`
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
+  -- Chat Messages Table (نظام الشات المباشر بين الأدمن والمدرسين)
+  CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_id INTEGER NOT NULL,
+    receiver_id INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    is_read INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(receiver_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
   -- Indexes for speed & search
   CREATE INDEX IF NOT EXISTS idx_students_user ON students(user_id);
-  CREATE INDEX IF NOT EXISTS idx_students_group ON students(group_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_user_date ON sessions(user_id, session_date);
   CREATE INDEX IF NOT EXISTS idx_attendance_session ON attendance(session_id);
-  CREATE INDEX IF NOT EXISTS idx_attendance_student ON attendance(student_id);
-  CREATE INDEX IF NOT EXISTS idx_payments_student ON payments(student_id);
+  CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id, receiver_id);
 `);
+
+// Migration: Safely add role and status columns to users table if they don't exist
+try {
+  db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'teacher'");
+} catch (e) {}
+try {
+  db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
+} catch (e) {}
+
+// Seed Default Master Admin Account
+function ensureAdminExists() {
+  const admin = db.prepare("SELECT id FROM users WHERE role = 'admin' OR phone = 'admin' LIMIT 1").get();
+  if (!admin) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync('admin', salt, 64).toString('hex');
+    db.prepare(`
+      INSERT INTO users (name, phone, password_hash, salt, subject, center_name, role, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'admin', 'active')
+    `).run('المدير العام (الأدمن)', 'admin', hash, salt, 'إدارة المنصة', 'الإدارة العامة');
+    console.log('✅ Master Admin account initialized: Phone [admin] / Password [admin]');
+  }
+}
+ensureAdminExists();
 
 // Helper to seed default settings for a newly created user
 function initUserSettings(userId, teacherName, subject = '', centerName = '') {
@@ -198,5 +234,6 @@ function initUserSettings(userId, teacherName, subject = '', centerName = '') {
 
 module.exports = {
   db,
-  initUserSettings
+  initUserSettings,
+  ensureAdminExists
 };
